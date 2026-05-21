@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Платформа оценки экспертами</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/static/css/app.css?v=cloudflare-ux-v5" />
+    <link rel="stylesheet" href="/static/css/app.css?v=cloudflare-ux-v6" />
   </head>
   <body>
     <div class="shell">
@@ -17,6 +17,7 @@
         <div class="topbar-actions">
           <div class="sync-pill" id="sync-status">Готово</div>
           <div class="user-badge hidden" id="user-badge"></div>
+          <button class="ghost-button hidden profile-button" id="profile-button" type="button" aria-controls="profile-drawer">Профиль</button>
           <button class="ghost-button hidden" id="logout-button" type="button">Выйти</button>
         </div>
       </header>
@@ -142,69 +143,67 @@
         </main>
 
         <aside class="rail">
-          <section class="panel rail-panel">
+          <section class="panel rail-panel agent-panel" data-agent-panel>
             <div class="panel-header">
               <div>
-                <div class="panel-tag">Справка</div>
-                <h3>Подсказка к заданию</h3>
+                <div class="panel-tag">ИИ-агент</div>
+                <h3>Агент платформы</h3>
               </div>
             </div>
-            <div id="help-list" class="stack-list"></div>
-            <article class="help-article" id="help-article">
-              <p class="subtle">Выберите статью справки или задайте вопрос помощнику.</p>
-            </article>
-          </section>
 
-          <section class="panel rail-panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-tag">Помощник</div>
-                <h3>Безопасный помощник</h3>
+            <div class="agent-context-grid">
+              <div class="agent-context-card">
+                <span>Контекст</span>
+                <strong id="agent-context-task">задание не выбрано</strong>
+              </div>
+              <div class="agent-context-card">
+                <span>Безопасность</span>
+                <strong>оценки не меняет</strong>
+              </div>
+              <div class="agent-context-card">
+                <span>Память</span>
+                <strong id="agent-context-memory">диалог сжат</strong>
               </div>
             </div>
-            <div class="mcp-note">
-              Помощник объясняет задания, ищет справку и создает обращения. Изменение оценок и настроек запрещено без отдельного подтверждения.
+
+            <div class="agent-quick-actions" aria-label="Быстрые действия агента">
+              <button class="agent-chip" type="button" data-agent-prompt="Объясни текущее задание простыми словами и выдели критерии.">Объяснить</button>
+              <button class="agent-chip" type="button" data-agent-prompt="Проверь текущую форму на пропуски и рискованные места перед отправкой.">Проверить</button>
+              <button class="agent-chip" type="button" data-agent-prompt="Создай обращение администратору по текущему вопросу.">Админ</button>
+              <button class="agent-chip" type="button" data-agent-prompt="Найди справку по текущему типу задания и предложи следующий шаг.">Справка</button>
             </div>
+
             <div class="agent-log" id="agent-log"></div>
             <form id="agent-form" class="agent-form">
-              <textarea id="agent-input" rows="3" placeholder="Например: объясни задание или создай обращение"></textarea>
+              <textarea id="agent-input" rows="3" placeholder="Вопрос агенту"></textarea>
               <button class="secondary-button" type="submit">Отправить</button>
             </form>
-          </section>
-
-          <section class="panel rail-panel hidden" id="admin-panel-legacy">
-            <div class="panel-header">
-              <div>
-                <div class="panel-tag">Администратор</div>
-                <h3>Управление платформой</h3>
-              </div>
-            </div>
-            <div class="section-block">
-              <div class="section-title">Проекты и схемы</div>
-              <div id="admin-control-plane" class="stack-list"></div>
-            </div>
-            <div class="section-block">
-              <div class="section-title">Предпросмотр схем</div>
-              <div id="admin-schema-previews" class="stack-list"></div>
-            </div>
-            <div class="section-block">
-              <div class="section-title">Качество</div>
-              <div id="admin-quality-summary" class="stack-list"></div>
-            </div>
-            <div class="section-block">
-              <div class="section-title">Обращения</div>
-              <div id="admin-support" class="stack-list"></div>
-            </div>
           </section>
         </aside>
       </section>
     </div>
 
+    <div class="drawer-backdrop hidden" id="profile-drawer-backdrop"></div>
+    <aside class="profile-drawer hidden" id="profile-drawer" aria-hidden="true" aria-labelledby="profile-drawer-title">
+      <div class="drawer-shell">
+        <div class="drawer-header">
+          <div>
+            <div class="panel-tag">Профиль</div>
+            <h3 id="profile-drawer-title">Профиль и доступы</h3>
+          </div>
+          <button class="ghost-button compact" id="profile-drawer-close" type="button">Закрыть</button>
+        </div>
+        <div class="profile-drawer-content" id="profile-drawer-content">
+          <div class="empty-state">Профиль загружается.</div>
+        </div>
+      </div>
+    </aside>
+
     <div class="toast-stack" id="toast-stack"></div>
     <script>
       window.__APP_BASE_PATH__ = "";
     </script>
-    <script type="module" src="/static/js/app.js?v=cloudflare-free"></script>
-    <script type="module" src="/static/js/expert_extensions.js?v=cloudflare-expert-v3"></script>
+    <script type="module" src="/static/js/app.js?v=cloudflare-free-v2"></script>
+    <script type="module" src="/static/js/expert_extensions.js?v=cloudflare-expert-v5"></script>
   </body>
 </html>

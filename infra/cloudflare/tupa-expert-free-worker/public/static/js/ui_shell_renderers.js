@@ -1056,7 +1056,7 @@ export function renderAgentLog(messages) {
     .map(
       (item) => `
         <div class="agent-message ${item.role}">
-          <strong>${item.role === "user" ? "Вы" : "Помощник"}</strong>
+          <strong>${item.role === "user" ? "Вы" : "Агент"}</strong>
           <div>${escapeHtml(item.text)}</div>
         </div>
       `,

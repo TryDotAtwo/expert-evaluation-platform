@@ -8,6 +8,11 @@ const LEGAL_AREAS = [
   "Интеллектуальные права",
 ];
 
+let profileLoadedForToken = "";
+let profileLoading = false;
+let drawerChromeReady = false;
+let agentSurfaceReady = false;
+
 function esc(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -32,6 +37,31 @@ async function api(path, options = {}) {
 
 function selectedLegalAreas(form) {
   return Array.from(form.querySelectorAll("input[name='legal_areas']:checked")).map((item) => item.value);
+}
+
+function roleLabel(role) {
+  return {
+    admin: "администратор",
+    expert: "эксперт",
+    reviewer: "проверяющий",
+  }[role] || role || "эксперт";
+}
+
+function accessLabel(project) {
+  if (project.access === "requires_area" || project.status === "locked") return "нужна подходящая область права";
+  if (project.access === "granted" || project.status === "active") return "доступ открыт";
+  if (project.access === "eligible" || project.status === "available") return "можно запросить доступ";
+  return "доступ по запросу";
+}
+
+function accessDisabled(project) {
+  return project.access === "requires_area" || project.status === "locked" || project.access === "granted" || project.status === "active";
+}
+
+function accessActionLabel(project) {
+  if (project.access === "requires_area" || project.status === "locked") return "Недоступно";
+  if (project.access === "granted" || project.status === "active") return "Доступ есть";
+  return "Запросить доступ";
 }
 
 function installRegistration() {
@@ -76,7 +106,7 @@ function installRegistration() {
       };
       const result = await api("/api/register", { method: "POST", body: JSON.stringify(body) });
       localStorage.setItem("platform_token", result.token);
-      status.textContent = "Профиль создан. Перезагрузка рабочего места...";
+      status.textContent = "Профиль создан. Рабочее место загружается...";
       location.reload();
     } catch (error) {
       status.textContent = error.message;
@@ -84,82 +114,166 @@ function installRegistration() {
   });
 }
 
-function profilePanel(profile) {
-  const areas = profile?.legal_areas?.length ? profile.legal_areas.join(", ") : "не указаны";
+function openProfileDrawer() {
+  document.getElementById("profile-drawer")?.classList.remove("hidden");
+  document.getElementById("profile-drawer-backdrop")?.classList.remove("hidden");
+  const drawer = document.getElementById("profile-drawer");
+  if (drawer) drawer.setAttribute("aria-hidden", "false");
+}
+
+function closeProfileDrawer() {
+  document.getElementById("profile-drawer")?.classList.add("hidden");
+  document.getElementById("profile-drawer-backdrop")?.classList.add("hidden");
+  const drawer = document.getElementById("profile-drawer");
+  if (drawer) drawer.setAttribute("aria-hidden", "true");
+}
+
+function installProfileDrawerChrome() {
+  if (drawerChromeReady) return;
+  drawerChromeReady = true;
+  document.getElementById("profile-button")?.addEventListener("click", openProfileDrawer);
+  document.getElementById("profile-drawer-close")?.addEventListener("click", closeProfileDrawer);
+  document.getElementById("profile-drawer-backdrop")?.addEventListener("click", closeProfileDrawer);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeProfileDrawer();
+  });
+}
+
+function renderProfileDrawer(profile, dashboard) {
+  const user = dashboard?.user || {};
+  const areas = Array.isArray(profile?.legal_areas) ? profile.legal_areas : [];
+  const credentials = profile?.credentials?.trim() || "Регалии не указаны";
+  const certificates = profile?.certificates?.trim() || "Сертификаты не указаны";
+  const reviewerEnabled = Boolean(profile?.wants_reviewer || user.role === "reviewer");
+  const projects = dashboard?.projects || [];
+
   return `
-    <section class="panel cf-extension-panel" id="expert-profile-panel">
-      <div class="panel-header">
-        <div><div class="panel-tag">Профиль</div><h3>Компетенции эксперта</h3></div>
+    <div class="profile-summary">
+      <div class="profile-identity">
+        <strong>${esc(user.display_name || user.username || "Эксперт")}</strong>
+        <span class="subtle">${esc(roleLabel(dashboard?.role || user.role))}</span>
       </div>
-      <div class="stack-list">
-        <div class="stack-item"><strong>Области права</strong><div class="subtle">${esc(areas)}</div></div>
-        <div class="stack-item"><strong>Регалии</strong><div class="subtle">${esc(profile?.credentials || "не указаны")}</div></div>
-        <div class="stack-item"><strong>Ревью</strong><div class="subtle">${profile?.wants_reviewer ? "режим ревьювера доступен" : "режим эксперта"}</div></div>
+
+      <div class="profile-section">
+        <div class="section-title">Области права</div>
+        <div class="profile-chip-list">
+          ${areas.length ? areas.map((area) => `<span class="profile-chip">${esc(area)}</span>`).join("") : `<span class="profile-chip">области не указаны</span>`}
+        </div>
       </div>
-      <div class="hero-actions">
-        <button class="secondary-button" type="button" data-mode="expert">Режим эксперта</button>
-        <button class="secondary-button" type="button" data-mode="reviewer">Режим ревьювера</button>
+
+      <div class="profile-section">
+        <div class="section-title">Регалии</div>
+        <div class="stack-item"><div class="subtle">${esc(credentials)}</div></div>
+        <div class="stack-item"><strong>Сертификаты</strong><div class="subtle">${esc(certificates)}</div></div>
       </div>
-    </section>
+
+      <div class="profile-section">
+        <div class="section-title">Режим работы</div>
+        <div class="stack-item">
+          <strong>${reviewerEnabled ? "Эксперт и проверяющий" : "Эксперт"}</strong>
+          <div class="subtle">${reviewerEnabled ? "Ревью-режим доступен" : "Ревью-режим не запрошен"}</div>
+        </div>
+        <div class="hero-actions">
+          <button class="secondary-button" type="button" data-mode="expert">Режим эксперта</button>
+          <button class="secondary-button" type="button" data-mode="reviewer" ${reviewerEnabled ? "" : "disabled"}>Режим ревью</button>
+        </div>
+      </div>
+
+      <div class="profile-section">
+        <div class="section-title">Проекты</div>
+        <div class="stack-list">
+          ${projects.map((project) => `
+            <div class="stack-item project-access-item">
+              <div class="project-access-row">
+                <div>
+                  <strong>${esc(project.name)}</strong>
+                  <div class="subtle">${esc(project.summary || "")}</div>
+                </div>
+                <span class="meta-chip">${esc(accessLabel(project))}</span>
+              </div>
+              <div class="hero-actions">
+                <button class="ghost-button compact" type="button" data-project-id="${esc(project.id)}" ${accessDisabled(project) ? "disabled" : ""}>${esc(accessActionLabel(project))}</button>
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    </div>
   `;
 }
 
-function projectPanel(projects) {
-  return `
-    <section class="panel cf-extension-panel" id="project-join-panel">
-      <div class="panel-header">
-        <div><div class="panel-tag">Проекты</div><h3>Подключение к проектам</h3></div>
-      </div>
-      <div class="stack-list">
-        ${(projects || []).map((project) => `
-          <div class="stack-item">
-            <strong>${esc(project.name)}</strong>
-            <div class="subtle">${esc(project.summary || "")}</div>
-            <div class="hero-actions"><button class="ghost-button compact" type="button" data-project-id="${esc(project.id)}" ${project.access === "requires_area" ? "disabled" : ""}>${project.access === "requires_area" ? "Нет доступа" : "Запросить доступ"}</button></div>
-          </div>
-        `).join("")}
-      </div>
-    </section>
-  `;
+function wireProfileDrawerActions(container) {
+  container.querySelectorAll("[data-mode]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      button.textContent = "Переключение...";
+      await api("/api/mode", { method: "POST", body: JSON.stringify({ mode: button.dataset.mode }) });
+      location.reload();
+    });
+  });
+  container.querySelectorAll("[data-project-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      button.textContent = "Запрошено";
+      button.disabled = true;
+      await api("/api/projects/join", { method: "POST", body: JSON.stringify({ project_id: button.dataset.projectId }) });
+    });
+  });
 }
 
 async function installWorkspaceExtensions() {
-  if (!token() || document.getElementById("expert-profile-panel")) return;
-  const rail = document.querySelector(".rail");
-  if (!rail) return;
+  const currentToken = token();
+  const profileButton = document.getElementById("profile-button");
+  const content = document.getElementById("profile-drawer-content");
+  if (!currentToken) {
+    profileLoadedForToken = "";
+    profileButton?.classList.add("hidden");
+    closeProfileDrawer();
+    return;
+  }
+  profileButton?.classList.remove("hidden");
+  if (!content || profileLoading || profileLoadedForToken === currentToken) return;
+  profileLoading = true;
   try {
     const [profileData, dashboard] = await Promise.all([api("/api/expert/profile"), api("/api/dashboard")]);
-    rail.insertAdjacentHTML("afterbegin", projectPanel(dashboard.projects));
-    rail.insertAdjacentHTML("afterbegin", profilePanel(profileData.profile));
-    rail.querySelectorAll("[data-mode]").forEach((button) => {
-      button.addEventListener("click", async () => {
-        await api("/api/mode", { method: "POST", body: JSON.stringify({ mode: button.dataset.mode }) });
-        location.reload();
-      });
-    });
-    rail.querySelectorAll("[data-project-id]").forEach((button) => {
-      button.addEventListener("click", async () => {
-        button.textContent = "Запрос отправлен";
-        await api("/api/projects/join", { method: "POST", body: JSON.stringify({ project_id: button.dataset.projectId }) });
-      });
-    });
+    content.innerHTML = renderProfileDrawer(profileData.profile, dashboard);
+    wireProfileDrawerActions(content);
+    profileLoadedForToken = currentToken;
   } catch {
-    // Extensions stay optional in demo mode.
+    content.innerHTML = `<div class="empty-state">Профиль временно недоступен.</div>`;
+  } finally {
+    profileLoading = false;
   }
 }
 
-function installAgentHint() {
-  const note = document.querySelector(".mcp-note");
-  if (note && !note.dataset.extended) {
-    note.dataset.extended = "true";
-    note.textContent = "Помощник запоминает переписку, сжимает контекст, готов к OpenAI Agents SDK, может подготовить обращение администратору и подсказать действия на платформе.";
+function installAgentSurface() {
+  if (!agentSurfaceReady) {
+    agentSurfaceReady = true;
+    document.querySelectorAll("[data-agent-prompt]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const input = document.getElementById("agent-input");
+        const form = document.getElementById("agent-form");
+        if (!input || !form) return;
+        input.value = button.dataset.agentPrompt || "";
+        input.focus();
+        form.requestSubmit();
+      });
+    });
   }
+
+  const taskTitle = document.getElementById("hero-title")?.textContent?.trim();
+  const status = document.getElementById("assignment-status")?.textContent?.trim();
+  const completion = document.getElementById("completion-caption")?.textContent?.trim();
+  const taskNode = document.getElementById("agent-context-task");
+  const memoryNode = document.getElementById("agent-context-memory");
+  const messageCount = document.querySelectorAll("#agent-log .agent-message").length;
+  if (taskNode) taskNode.textContent = taskTitle && !/не выбрано/i.test(taskTitle) ? `${taskTitle} · ${status || "-"}` : "задание не выбрано";
+  if (memoryNode) memoryNode.textContent = messageCount > 2 ? `сообщений: ${messageCount}, ${completion || "0%"}` : "диалог готов";
 }
 
 function tick() {
   installRegistration();
+  installProfileDrawerChrome();
   installWorkspaceExtensions();
-  installAgentHint();
+  installAgentSurface();
 }
 
 document.addEventListener("DOMContentLoaded", () => {

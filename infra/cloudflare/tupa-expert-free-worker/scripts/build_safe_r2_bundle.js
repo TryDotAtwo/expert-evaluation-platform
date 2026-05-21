@@ -435,16 +435,18 @@ const compactSnapshot = {
 };
 
 const minimalRenderer = `const e=(v)=>String(v??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;");
-const s=(d)=>Object.entries(d.summary||{}).filter(([,v])=>v).map(([k,v])=>\`<div class="summary-card"><strong>\${e(v)}</strong><span>\${e(k)}</span></div>\`).join("");
+const labels={available:"доступно",assigned:"назначено",claimed:"взято",draft_saved:"черновик",submitted:"отправлено",approved:"принято",needs_rework:"доработка",blocked:"заблокировано",open_support:"обращения",in_review:"проверка"};
+const l=(k)=>labels[k]||k||"-";
+const s=(d)=>Object.entries(d.summary||{}).filter(([,v])=>v).map(([k,v])=>\`<div class="summary-card"><strong>\${e(v)}</strong><span>\${e(l(k))}</span></div>\`).join("");
 const p=(d)=>((d.projects||[]).map(x=>\`<button class="project-pill" data-assignment-id="\${e((d.assignments||[]).find(a=>a.project_id===x.id)?.id||"")}"><strong>\${e(x.name)}</strong><span>\${e(x.summary||"")}</span></button>\`).join(""));
-const a=(d,id)=>((d.assignments||[]).map(x=>\`<button class="assignment-card \${x.id===id?"active":""}" data-assignment-id="\${e(x.id)}"><strong>\${e(x.task_title||x.id)}</strong><span>\${e(x.project_name||"")}</span><span class="status-chip">\${e(x.status)}</span></button>\`).join(""));
-export function renderDashboardShell({dashboard,sessionRole,selectedAssignmentId}){const admin=sessionRole==="admin";return{summaryHtml:s(dashboard),projectsHtml:p(dashboard),assignmentsHtml:a(dashboard,selectedAssignmentId),adminVisible:admin,adminWorkspaceHtml:admin?'<div class="stack-item"><strong>Cloudflare admin demo</strong><div class="subtle">Worker + R2, Yandex disabled</div></div>':"",adminSupportHtml:"",adminSchemaHtml:"",adminQualityHtml:"",adminControlHtml:""}}
+const a=(d,id)=>((d.assignments||[]).map(x=>\`<button class="assignment-card \${x.id===id?"active":""}" data-assignment-id="\${e(x.id)}"><strong>\${e(x.task_title||x.id)}</strong><span>\${e(x.project_name||"")}</span><span class="status-chip">\${e(l(x.status))}</span></button>\`).join(""));
+export function renderDashboardShell({dashboard,sessionRole,selectedAssignmentId}){const admin=sessionRole==="admin";return{summaryHtml:s(dashboard),projectsHtml:p(dashboard),assignmentsHtml:a(dashboard,selectedAssignmentId),adminVisible:admin,adminWorkspaceHtml:admin?'<div class="stack-item"><strong>Административный демо-стенд</strong><div class="subtle">Cloudflare Worker + R2, источник Yandex отключен</div></div>':"",adminSupportHtml:"",adminSchemaHtml:"",adminQualityHtml:"",adminControlHtml:""}}
 export function wireDashboardSelection(c,onSelect){c?.querySelectorAll("[data-assignment-id]").forEach(b=>b.addEventListener("click",()=>{if(b.dataset.assignmentId)onSelect(b.dataset.assignmentId)}))}
 export function renderHelpPane(items,selectedHelpId){const first=selectedHelpId||items?.[0]?.id;const item=(items||[]).find(x=>x.id===first)||items?.[0]||{};return{nextSelectedHelpId:first,listHtml:(items||[]).map(x=>\`<button data-help-id="\${e(x.id)}">\${e(x.title)}</button>\`).join(""),articleHtml:\`<h3>\${e(item.title||"Справка")}</h3><p>\${e(item.body||"")}</p>\`}}
 export function wireHelpSelection(c,onSelect){c?.querySelectorAll("[data-help-id]").forEach(b=>b.addEventListener("click",()=>onSelect(b.dataset.helpId)))}
 export function renderReviewerPanel(){return '<div class="subtle">Проверка доступна после отправки задания.</div>'}
 export function renderExecutionHistory(){return '<div class="subtle">История действий пуста.</div>'}
-export function renderAgentLog(messages){return(messages||[]).map(m=>\`<div class="agent-message \${e(m.role)}"><strong>\${e(m.role)}</strong><div>\${e(m.text)}</div></div>\`).join("")}`;
+export function renderAgentLog(messages){const r={assistant:"Агент",user:"Вы"};return(messages||[]).map(m=>\`<div class="agent-message \${e(m.role)}"><strong>\${e(r[m.role]||m.role)}</strong><div>\${e(m.text)}</div></div>\`).join("")}`;
 
 const ultraCard = {
   id: "demo-task-1",

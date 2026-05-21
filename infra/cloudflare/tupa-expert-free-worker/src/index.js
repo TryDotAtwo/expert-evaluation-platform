@@ -72,6 +72,12 @@ let boot;
 const registeredAccounts = new Map();
 const agentThreads = new Map();
 const adminRequests = [];
+const AGENT_POLICY = {
+  runtime: "cloudflare_worker_openai_responses_ready",
+  base: "openai_agents_sdk_contract",
+  guardrails: ["codex_security_boundary", "context_compression", "admin_request_only_for_escalation"],
+  forbidden_actions: ["score_mutation", "admin_config_mutation", "silent_submit", "cross_project_data_access"],
+};
 const PROJECT_REQUIRED_AREAS = {
   "civil-law-review": LEGAL_AREAS[0],
   "tax-claims": LEGAL_AREAS[4],
@@ -299,12 +305,102 @@ function adminMutationOk(resource) {
   });
 }
 
-function handleAgentV2(account, requestBody) {
+function compressThread(thread) {
+  if (thread.length <= 10) return thread;
+  const earlier = thread.slice(0, -8);
+  const latest = thread.slice(-8);
+  const summary = earlier
+    .map((item) => `${item.role}: ${item.text}`)
+    .join(" ")
+    .slice(0, 900);
+  return [
+    {
+      role: "system",
+      text: `Сжатый контекст предыдущего диалога: ${summary}`,
+      created_at: new Date().toISOString(),
+    },
+    ...latest,
+  ];
+}
+
+function detectAgentIntent(message) {
+  const text = message.toLowerCase();
+  if (/админ|поддерж|оператор|связ|жалоб|доступ/.test(text)) return "admin";
+  if (/провер|пропуск|готов|ошиб|риск|submit|отправ/.test(text)) return "check";
+  if (/справ|найд|поиск|гугл|google|web|источник/.test(text)) return "help";
+  if (/объясн|поясн|что делать|критер|задан/.test(text)) return "explain";
+  return "general";
+}
+
+function deterministicAgentResponse({ message, assignmentId, intent, needsAdmin, canUseWeb }) {
+  const contextLine = assignmentId ? `Контекст задания: ${assignmentId}.` : "Контекст задания не выбран.";
+  const guardrailLine = "Граница безопасности: изменение оценок, отправка формы и изменение административных настроек не выполняются агентом напрямую.";
+  const base = {
+    explain: "Порядок работы: прочитать исходный материал, проверить критерии, заполнить обязательные поля, сохранить черновик, затем отправить результат после самопроверки.",
+    check: "Проверка перед отправкой: заполненность обязательных полей, наличие комментария, соответствие выбранной категории исходному материалу, отсутствие противоречий между оценкой и пояснением.",
+    help: canUseWeb
+      ? "Поиск доступен через OpenAI Responses API с web_search_preview при включенном AGENT_ENABLE_WEB_SEARCH."
+      : "Поиск через внешний веб отключен в текущей конфигурации; доступна локальная справка и подготовка поискового запроса.",
+    admin: "Обращение администратору создано. Очередь обращений видна администратору платформы.",
+    general: "Следующий полезный шаг: выбрать задание, заполнить форму, попросить проверку пропусков или создать обращение администратору.",
+  }[intent] || "";
+  return [
+    "Агент платформы готов к OpenAI Agents SDK контракту и работает в безопасном режиме Cloudflare Worker.",
+    contextLine,
+    message ? `Запрос принят: ${message}` : "Запрос пустой.",
+    needsAdmin ? "Обращение администратору создано." : base,
+    guardrailLine,
+  ].filter(Boolean).join(" ");
+}
+
+async function callOpenAIResponse(env, { account, message, assignmentId, thread, intent, needsAdmin }) {
+  if (!env.OPENAI_API_KEY) return null;
+  const input = thread.map((item) => ({
+    role: item.role === "assistant" ? "assistant" : item.role === "system" ? "system" : "user",
+    content: item.text,
+  }));
+  const body = {
+    model: env.OPENAI_MODEL || "gpt-5",
+    store: false,
+    instructions: [
+      "Ты агент платформы экспертной оценки.",
+      "Отвечай по-русски, кратко, практически, без изменения оценок и административных настроек.",
+      "Разрешенные действия: объяснить задание, проверить пропуски, подготовить обращение администратору, предложить безопасный следующий шаг.",
+      `Политика безопасности: ${JSON.stringify(AGENT_POLICY)}.`,
+      `Роль пользователя: ${account.user.role}. Текущее задание: ${assignmentId || "не выбрано"}. Интент: ${intent}. Эскалация администратору: ${needsAdmin ? "да" : "нет"}.`,
+    ].join("\n"),
+    input,
+  };
+  if (env.AGENT_ENABLE_WEB_SEARCH === "true") {
+    body.tools = [{ type: "web_search_preview" }];
+  }
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) return null;
+  const data = await response.json();
+  if (data.output_text) return data.output_text;
+  return (data.output || [])
+    .flatMap((item) => item.content || [])
+    .map((part) => part.text || "")
+    .filter(Boolean)
+    .join("\n")
+    .trim() || null;
+}
+
+async function handleAgentV2(account, requestBody, env) {
   const message = String(requestBody.message || "").trim();
   const assignmentId = requestBody.assignment_id || null;
   const threadKey = account.user.id;
   const thread = agentThreads.get(threadKey) || [];
-  const needsAdmin = /админ|поддерж|оператор|связ/i.test(message);
+  const intent = detectAgentIntent(message);
+  const needsAdmin = intent === "admin";
+  const actions = [];
   thread.push({ role: "user", text: message, created_at: new Date().toISOString() });
   if (needsAdmin) {
     adminRequests.push({
@@ -314,19 +410,29 @@ function handleAgentV2(account, requestBody) {
       message,
       created_at: new Date().toISOString(),
     });
+    actions.push({ type: "admin_request_created" });
   }
-  const text = [
-    "Помощник работает в Cloudflare Worker: хранит краткую историю диалога, сжимает контекст до последних сообщений и готов к OpenAI Agents SDK через секрет OPENAI_API_KEY.",
-    assignmentId ? `Контекст задания: ${assignmentId}.` : "Контекст задания не выбран.",
-    message ? `Запрос принят: ${message}` : "Пустой запрос не требует действия.",
-    needsAdmin ? "Обращение администратору создано." : "Помощник может объяснить задание, предложить следующий шаг, подготовить обращение администратору и подсказать поиск.",
-  ].join(" ");
-  thread.push({ role: "assistant", text, created_at: new Date().toISOString() });
-  agentThreads.set(threadKey, thread.slice(-12));
+  if (intent === "help") actions.push({ type: "open_help", article_id: "demo" });
+
+  const compressed = compressThread(thread);
+  const openAiText = await callOpenAIResponse(env, { account, message, assignmentId, thread: compressed, intent, needsAdmin })
+    .catch(() => null);
+  const text = openAiText || deterministicAgentResponse({
+    message,
+    assignmentId,
+    intent,
+    needsAdmin,
+    canUseWeb: env.AGENT_ENABLE_WEB_SEARCH === "true",
+  });
+
+  compressed.push({ role: "assistant", text, created_at: new Date().toISOString() });
+  agentThreads.set(threadKey, compressThread(compressed));
   return json({
     message: text,
     memory: agentThreads.get(threadKey),
-    actions: needsAdmin ? [{ type: "admin_request_created" }] : [],
+    memory_policy: "last_messages_plus_compressed_summary",
+    security_policy: AGENT_POLICY,
+    actions,
     user_role: account.user.role,
   });
 }
@@ -417,7 +523,7 @@ async function handleApi(request, env) {
   if (path === "/api/admin/routing") return account.user.role === "admin" ? json(clone(account.admin_routing)) : forbidden();
   if (path === "/api/admin/quality-center") return account.user.role === "admin" ? json(clone(account.admin_quality_center)) : forbidden();
   if (path === "/api/admin/import-export") return account.user.role === "admin" ? json(clone(account.admin_import_export)) : forbidden();
-  if (path === "/api/agent/chat" && request.method === "POST") return handleAgentV2(account, await readJson(request));
+  if (path === "/api/agent/chat" && request.method === "POST") return handleAgentV2(account, await readJson(request), env);
   if (path === "/api/help") return json({ items: clone(state.snapshot.help || []) });
   if (path === "/api/help/search") {
     const q = (url.searchParams.get("q") || "").toLowerCase();
