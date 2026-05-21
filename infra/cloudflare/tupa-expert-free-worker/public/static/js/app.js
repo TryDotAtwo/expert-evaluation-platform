@@ -14,7 +14,7 @@ import {
   renderReviewerPanel,
   wireDashboardSelection,
   wireHelpSelection,
-} from "./ui_shell_renderers.js";
+} from "./ui_shell_renderers.js?v=cloudflare-renderer-v2";
 import { createShellController } from "./platform_shell_controller.js";
 
 const BASE_PATH = window.__APP_BASE_PATH__ || "";
