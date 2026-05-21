@@ -214,8 +214,6 @@ function dueForIndex(index) {
 
 async function ensureUserAssignments(env, user) {
   await ensureProjects(env);
-  const existing = await env.EXPERT_DB.prepare("SELECT COUNT(*) AS count FROM assignments WHERE user_id = ?").bind(user.id).first();
-  if (Number(existing?.count || 0) > 0) return;
   const projects = await env.EXPERT_DB.prepare("SELECT * FROM projects ORDER BY created_at, id").all();
   const createdAt = nowIso();
   const statements = [];

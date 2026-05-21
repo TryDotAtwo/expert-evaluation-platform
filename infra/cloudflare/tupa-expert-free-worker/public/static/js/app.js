@@ -9,7 +9,7 @@ const state = {
   queueFilter: "all",
   search: "",
   agentMessages: [
-    { role: "assistant", text: "Агент готов объяснять задания, проверять пропуски, готовить обращения администратору и искать публичную информацию. Оценки и настройки агент напрямую не меняет." },
+    { role: "assistant", text: "Готов объяснить задание, проверить пропуски, найти справку или подготовить обращение администратору." },
   ],
 };
 
@@ -29,7 +29,7 @@ const els = {
   queueFilters: document.getElementById("queue-filters"),
   assignmentSearch: document.getElementById("assignment-search"),
   assignmentList: document.getElementById("assignment-list"),
-  projectRow: document.getElementById("project-row"),
+  compactProjectList: document.getElementById("compact-project-list"),
   taskCard: document.getElementById("task-card"),
   adminSurface: document.getElementById("admin-surface"),
   refreshButton: document.getElementById("refresh-button"),
@@ -169,17 +169,21 @@ function renderDashboard() {
     <div class="metric-card"><strong>${escapeHtml(summary[key] || 0)}</strong><span>${escapeHtml(label)}</span></div>
   `).join("");
 
-  els.projectRow.innerHTML = (dashboard.projects || []).map((project) => `
-    <article class="project-card">
-      <strong>${escapeHtml(project.name)}</strong>
-      <span>${escapeHtml(project.summary)}</span>
-      <div class="task-meta">
-        <span class="chip">${escapeHtml(labels[project.task_type] || project.task_type)}</span>
-        <span class="chip">${escapeHtml(project.membership_status || project.access)}</span>
-      </div>
-      <button class="secondary-button" type="button" data-join-project="${escapeHtml(project.id)}">Подключиться</button>
-    </article>
-  `).join("");
+  els.compactProjectList.innerHTML = (dashboard.projects || []).map((project) => {
+    const membership = project.membership_status || project.access || "available";
+    const isActive = membership === "active";
+    const isRequested = membership === "requested";
+    const actionLabel = isActive ? "Подключено" : isRequested ? "Запрошено" : "Подключиться";
+    return `
+      <article class="project-access-card">
+        <div>
+          <strong>${escapeHtml(project.name)}</strong>
+          <span>${escapeHtml(labels[project.task_type] || project.task_type)} · ${escapeHtml(project.required_area || "область не задана")}</span>
+        </div>
+        <button class="secondary-button" type="button" data-join-project="${escapeHtml(project.id)}" ${isActive || isRequested ? "disabled" : ""}>${escapeHtml(actionLabel)}</button>
+      </article>
+    `;
+  }).join("") || `<div class="empty-inline">Проекты не найдены.</div>`;
 
   const query = state.search.toLowerCase();
   const items = (dashboard.assignments || []).filter((item) => {
@@ -193,14 +197,17 @@ function renderDashboard() {
         <strong>${escapeHtml(item.task_title)}</strong>
         ${statusChip(item.status)}
       </div>
-      <small>${escapeHtml(item.project_name)} · ${escapeHtml(labels[item.task_type] || item.task_type)} · ${escapeHtml(item.due_label)}</small>
+      <div class="assignment-meta">
+        <span class="task-type-chip ${escapeHtml(item.task_type)}">${escapeHtml(labels[item.task_type] || item.task_type)}</span>
+        <small>${escapeHtml(item.project_name)} · ${escapeHtml(item.due_label)}</small>
+      </div>
     </button>
   `).join("") || `<div class="empty-state"><p>Задания не найдены.</p></div>`;
 
   els.assignmentList.querySelectorAll("[data-assignment-id]").forEach((button) => {
     button.addEventListener("click", () => selectAssignment(button.dataset.assignmentId));
   });
-  els.projectRow.querySelectorAll("[data-join-project]").forEach((button) => {
+  els.compactProjectList.querySelectorAll("[data-join-project]").forEach((button) => {
     button.addEventListener("click", () => joinProject(button.dataset.joinProject));
   });
   renderAdminSurface();
@@ -317,7 +324,7 @@ function renderEditor(type, payload, draft) {
             </button>
           `).join("")}
         </div>
-        <label>Уверенность<select name="confidence">${scaleOptions(payload.confidence_scale, draft.confidence)}</select></label>
+        ${scaleButtons("confidence", payload.confidence_scale, draft.confidence, "Уверенность")}
         <label>Обоснование<textarea name="rationale" rows="5">${escapeHtml(draft.rationale || "")}</textarea></label>
       </form>
     `;
@@ -329,7 +336,7 @@ function renderEditor(type, payload, draft) {
           ${(payload.criteria || []).map((criterion) => `
             <div class="score-card">
               <strong>${escapeHtml(criterion.label)}</strong>
-              <select name="score_${escapeHtml(criterion.id)}">${scaleOptions(criterion.scale, draft[`score_${criterion.id}`])}</select>
+              ${scaleButtons(`score_${criterion.id}`, criterion.scale, draft[`score_${criterion.id}`], "Балл")}
             </div>
           `).join("")}
         </div>
@@ -347,7 +354,7 @@ function renderEditor(type, payload, draft) {
           <button class="comparison-box ${draft.preference === "b" ? "selected" : ""}" type="button" data-choice-name="preference" data-choice="b"><strong>Вариант B</strong><p>${escapeHtml(payload.option_b)}</p></button>
           <button class="comparison-box ${draft.preference === "tie" ? "selected" : ""}" type="button" data-choice-name="preference" data-choice="tie"><strong>Ничья</strong><p>Качество вариантов сопоставимо.</p></button>
         </div>
-        <label>Уверенность<select name="confidence">${scaleOptions(payload.confidence_scale, draft.confidence)}</select></label>
+        ${scaleButtons("confidence", payload.confidence_scale, draft.confidence, "Уверенность")}
         <label>Обоснование<textarea name="rationale" rows="5">${escapeHtml(draft.rationale || "")}</textarea></label>
       </form>
     `;
@@ -359,16 +366,25 @@ function renderEditor(type, payload, draft) {
         <button class="comparison-box ${draft.closest === "positive" ? "selected" : ""}" type="button" data-choice-name="closest" data-choice="positive"><strong>Текст 1</strong><p>${escapeHtml(payload.positive)}</p></button>
         <button class="comparison-box ${draft.closest === "negative" ? "selected" : ""}" type="button" data-choice-name="closest" data-choice="negative"><strong>Текст 2</strong><p>${escapeHtml(payload.negative)}</p></button>
       </div>
-      <label>Уверенность<select name="confidence">${scaleOptions(payload.confidence_scale, draft.confidence)}</select></label>
+      ${scaleButtons("confidence", payload.confidence_scale, draft.confidence, "Уверенность")}
       <label>Комментарий<textarea name="rationale" rows="5">${escapeHtml(draft.rationale || "")}</textarea></label>
     </form>
   `;
 }
 
-function scaleOptions(scale = [1, 2, 3, 4, 5], selected = "") {
-  return [`<option value="">-</option>`].concat(scale.map((value) => `
-    <option value="${escapeHtml(value)}" ${String(selected) === String(value) ? "selected" : ""}>${escapeHtml(value)}</option>
-  `)).join("");
+function scaleButtons(name, scale = [1, 2, 3, 4, 5], selected = "", label = "Оценка") {
+  const values = Array.isArray(scale) && scale.length ? scale : [1, 2, 3, 4, 5];
+  return `
+    <div class="scale-control">
+      <div class="scale-label">${escapeHtml(label)}</div>
+      <input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(selected || "")}" />
+      <div class="segmented-scale" role="group" aria-label="${escapeHtml(label)}">
+        ${values.map((value) => `
+          <button class="scale-button ${String(selected) === String(value) ? "selected" : ""}" type="button" data-choice-name="${escapeHtml(name)}" data-choice="${escapeHtml(value)}">${escapeHtml(value)}</button>
+        `).join("")}
+      </div>
+    </div>
+  `;
 }
 
 function taskPayloadFromForm() {

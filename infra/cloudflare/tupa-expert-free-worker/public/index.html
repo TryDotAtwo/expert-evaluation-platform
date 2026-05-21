@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Экспертная платформа</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/static/css/app.css?v=prod-d1-ux-2" />
+    <link rel="stylesheet" href="/static/css/app.css?v=prod-d1-ux-3" />
   </head>
   <body>
     <div class="app-shell">
@@ -15,13 +15,6 @@
           <div>
             <strong>Экспертная платформа</strong>
             <span>тупа.рф/expert</span>
-          </div>
-        </div>
-        <div class="topbar-center">
-          <div class="status-pill" id="sync-status">готово</div>
-          <div class="mode-switch hidden" id="mode-switch">
-            <button type="button" data-mode="expert" class="active">Эксперт</button>
-            <button type="button" data-mode="reviewer">Ревью</button>
           </div>
         </div>
         <div class="topbar-actions">
@@ -59,7 +52,14 @@
               <span class="eyebrow">Очередь</span>
               <h2>Задания</h2>
             </div>
-            <button class="icon-button" id="refresh-button" type="button" title="Обновить" aria-label="Обновить">↻</button>
+            <div class="rail-tools">
+              <div class="status-pill" id="sync-status">готово</div>
+              <button class="icon-button" id="refresh-button" type="button" title="Обновить" aria-label="Обновить">↻</button>
+            </div>
+          </div>
+          <div class="mode-switch hidden" id="mode-switch">
+            <button type="button" data-mode="expert" class="active">Эксперт</button>
+            <button type="button" data-mode="reviewer">Ревью</button>
           </div>
           <div class="metric-grid" id="summary-grid"></div>
           <div class="queue-filters" id="queue-filters">
@@ -70,10 +70,13 @@
           </div>
           <label class="search-box">Поиск<input id="assignment-search" placeholder="тип, проект, статус" /></label>
           <div class="assignment-list" id="assignment-list"></div>
+          <details class="compact-projects">
+            <summary>Проекты и доступы</summary>
+            <div id="compact-project-list"></div>
+          </details>
         </aside>
 
         <section class="workbench">
-          <div class="project-row" id="project-row"></div>
           <section class="task-card" id="task-card">
             <div class="empty-state">
               <h2>Выберите задание</h2>
@@ -139,6 +142,6 @@
     </aside>
 
     <div class="toast-stack" id="toast-stack"></div>
-    <script type="module" src="/static/js/app.js?v=prod-d1-ux-2"></script>
+    <script type="module" src="/static/js/app.js?v=prod-d1-ux-3"></script>
   </body>
 </html>
