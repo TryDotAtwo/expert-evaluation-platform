@@ -3,207 +3,142 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Платформа оценки экспертами</title>
+    <title>Экспертная платформа</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/static/css/app.css?v=cloudflare-ux-v6" />
+    <link rel="stylesheet" href="/static/css/app.css?v=prod-d1-ux-1" />
   </head>
   <body>
-    <div class="shell">
+    <div class="app-shell">
       <header class="topbar">
-        <div>
-          <h1>Платформа оценки экспертами</h1>
-          <p class="subtle">Рабочее место эксперта, проверяющего и администратора.</p>
+        <div class="brand">
+          <div class="brand-mark">Э</div>
+          <div>
+            <strong>Экспертная платформа</strong>
+            <span>тупа.рф/expert</span>
+          </div>
+        </div>
+        <div class="topbar-center">
+          <div class="status-pill" id="sync-status">готово</div>
+          <div class="mode-switch hidden" id="mode-switch">
+            <button type="button" data-mode="expert" class="active">Эксперт</button>
+            <button type="button" data-mode="reviewer">Ревью</button>
+          </div>
         </div>
         <div class="topbar-actions">
-          <div class="sync-pill" id="sync-status">Готово</div>
-          <div class="user-badge hidden" id="user-badge"></div>
-          <button class="ghost-button hidden profile-button" id="profile-button" type="button" aria-controls="profile-drawer">Профиль</button>
-          <button class="ghost-button hidden" id="logout-button" type="button">Выйти</button>
+          <button class="icon-button hidden" id="profile-button" type="button" title="Профиль" aria-label="Профиль">
+            <span>◎</span>
+          </button>
+          <button class="icon-button hidden" id="logout-button" type="button" title="Выйти" aria-label="Выйти">
+            <span>↗</span>
+          </button>
         </div>
       </header>
 
-      <section class="auth-view" id="login-view">
-        <div class="auth-card">
-          <div class="panel-tag">Вход</div>
-          <h2>Рабочее место</h2>
-          <p class="subtle">Доступны экспертная оценка, проверка, история черновиков и административные настройки.</p>
-          <form id="login-form" class="auth-form">
-            <label>
-              Имя пользователя
-              <input id="login-username" autocomplete="username" placeholder="Введите имя пользователя" />
-            </label>
-            <label>
-              Пароль
-              <input id="login-password" type="password" autocomplete="current-password" placeholder="Введите пароль" />
-            </label>
+      <main class="auth-screen" id="auth-screen">
+        <section class="auth-panel">
+          <div class="auth-copy">
+            <h1>Рабочее место эксперта</h1>
+            <p>Вход по email-коду. После входа доступны профиль, регалии, области права, очередь заданий, режим ревью и агент платформы.</p>
+          </div>
+          <form class="otp-form" id="otp-request-form">
+            <label>Email<input id="otp-email" type="email" autocomplete="email" placeholder="name@example.com" required /></label>
+            <button class="primary-button" type="submit">Получить код</button>
+          </form>
+          <form class="otp-form hidden" id="otp-verify-form">
+            <label>Код<input id="otp-code" inputmode="numeric" maxlength="6" placeholder="000000" required /></label>
             <button class="primary-button" type="submit">Войти</button>
           </form>
-          <details class="demo-credentials disclosure">
-            <summary>Тестовые учетные записи</summary>
-            <div class="disclosure-body">
-              <div>Тестовые учетные записи выдаются оператором стенда.</div>
-            </div>
-          </details>
-          <div class="error-box hidden" id="login-error"></div>
-        </div>
-      </section>
+          <div class="form-note" id="auth-note">Корень домена зарезервирован. Платформа работает только на /expert.</div>
+        </section>
+      </main>
 
-      <section class="workspace hidden" id="workspace-view">
-        <aside class="sidebar panel">
-          <div class="panel-header">
+      <main class="workspace hidden" id="workspace">
+        <aside class="queue-rail">
+          <div class="rail-header">
             <div>
-              <div class="panel-tag">Навигация</div>
-              <h3>Очередь</h3>
+              <span class="eyebrow">Очередь</span>
+              <h2>Задания</h2>
             </div>
-            <button class="ghost-button compact" id="refresh-button" type="button">Обновить</button>
+            <button class="icon-button" id="refresh-button" type="button" title="Обновить" aria-label="Обновить">↻</button>
           </div>
-
-          <div class="summary-grid" id="summary-grid"></div>
-
-          <div class="section-block">
-            <div class="section-title">Задания</div>
-            <div id="assignments-list" class="stack-list assignments"></div>
+          <div class="metric-grid" id="summary-grid"></div>
+          <div class="queue-filters" id="queue-filters">
+            <button class="active" type="button" data-filter="all">Все</button>
+            <button type="button" data-filter="assigned">Назначено</button>
+            <button type="button" data-filter="draft_saved">Черновики</button>
+            <button type="button" data-filter="submitted">Отправлено</button>
           </div>
+          <label class="search-box">Поиск<input id="assignment-search" placeholder="тип, проект, статус" /></label>
+          <div class="assignment-list" id="assignment-list"></div>
         </aside>
 
-        <main class="board">
-          <section class="panel project-dock" id="project-dock">
-            <div class="panel-header compact-header">
-              <div>
-                <div class="panel-tag">Проекты</div>
-                <h3>Контекст работы</h3>
-              </div>
-            </div>
-            <div id="projects-list" class="project-strip"></div>
-          </section>
-
-          <section class="panel hero-panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-tag">Текущее задание</div>
-                <h2 id="hero-title">Выберите задание</h2>
-                <p class="subtle" id="hero-subtitle">Форма оценки зависит от типа задания и истории проверки.</p>
-              </div>
-              <div class="hero-meta">
-                <div class="status-chip" id="assignment-status">Не выбрано</div>
-                <div class="revision-chip" id="assignment-revision">версия -</div>
-              </div>
-            </div>
-
-            <div class="assignment-guidance" id="assignment-guidance"></div>
-
-            <div class="completion-strip">
-              <div class="completion-bar"><span id="completion-bar"></span></div>
-              <div class="completion-caption" id="completion-caption">0%</div>
-            </div>
-
-            <div class="hero-actions">
-              <button class="primary-button" id="submit-button" type="button">Отправить</button>
-              <button class="secondary-button hidden" id="review-approve-button" type="button">Принять проверку</button>
-              <button class="ghost-button hidden" id="review-rework-button" type="button">Вернуть на доработку</button>
-              <button class="secondary-button hidden" id="review-adjudicate-button" type="button">Закрыть спор</button>
-              <button class="ghost-button" id="reload-assignment-button" type="button">Перезагрузить</button>
-            </div>
-          </section>
-
-          <section class="panel admin-workspace hidden" id="admin-panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-tag">Администратор</div>
-                <h3>Управление платформой</h3>
-              </div>
-            </div>
-            <div id="admin-workspace-content"></div>
-            <div class="admin-columns">
-              <div class="section-block">
-                <div class="section-title">Проекты и схемы</div>
-                <div id="admin-control-plane" class="stack-list"></div>
-              </div>
-              <div class="section-block">
-                <div class="section-title">Предпросмотр схем</div>
-                <div id="admin-schema-previews" class="stack-list"></div>
-              </div>
-              <div class="section-block">
-                <div class="section-title">Качество</div>
-                <div id="admin-quality-summary" class="stack-list"></div>
-              </div>
-              <div class="section-block">
-                <div class="section-title">Обращения</div>
-                <div id="admin-support" class="stack-list"></div>
-              </div>
-            </div>
-          </section>
-
-          <section class="panel task-panel" id="task-panel">
+        <section class="workbench">
+          <div class="project-row" id="project-row"></div>
+          <section class="task-card" id="task-card">
             <div class="empty-state">
-              <h3>Форма задания</h3>
-              <p>Выберите задание слева.</p>
+              <h2>Выберите задание</h2>
+              <p>Слева находится очередь. По центру появятся материалы, форма и история.</p>
             </div>
           </section>
-        </main>
+          <section class="admin-surface hidden" id="admin-surface"></section>
+        </section>
 
-        <aside class="rail">
-          <section class="panel rail-panel agent-panel" data-agent-panel>
-            <div class="panel-header">
+        <aside class="agent-rail">
+          <section class="agent-panel">
+            <div class="agent-head">
               <div>
-                <div class="panel-tag">ИИ-агент</div>
-                <h3>Агент платформы</h3>
+                <span class="eyebrow">ИИ-агент</span>
+                <h2>Агент платформы</h2>
               </div>
+              <div class="agent-live">online</div>
             </div>
-
-            <div class="agent-context-grid">
-              <div class="agent-context-card">
-                <span>Контекст</span>
-                <strong id="agent-context-task">задание не выбрано</strong>
-              </div>
-              <div class="agent-context-card">
-                <span>Безопасность</span>
-                <strong>оценки не меняет</strong>
-              </div>
-              <div class="agent-context-card">
-                <span>Память</span>
-                <strong id="agent-context-memory">диалог сжат</strong>
-              </div>
+            <div class="agent-context">
+              <div><span>Контекст</span><strong id="agent-task">задание не выбрано</strong></div>
+              <div><span>Память</span><strong id="agent-memory">D1 thread</strong></div>
+              <div><span>Безопасность</span><strong>без прямых мутаций</strong></div>
             </div>
-
-            <div class="agent-quick-actions" aria-label="Быстрые действия агента">
-              <button class="agent-chip" type="button" data-agent-prompt="Объясни текущее задание простыми словами и выдели критерии.">Объяснить</button>
-              <button class="agent-chip" type="button" data-agent-prompt="Проверь текущую форму на пропуски и рискованные места перед отправкой.">Проверить</button>
-              <button class="agent-chip" type="button" data-agent-prompt="Создай обращение администратору по текущему вопросу.">Админ</button>
-              <button class="agent-chip" type="button" data-agent-prompt="Найди справку по текущему типу задания и предложи следующий шаг.">Справка</button>
+            <div class="agent-actions">
+              <button type="button" data-agent-prompt="Объясни текущее задание и критерии.">Объяснить</button>
+              <button type="button" data-agent-prompt="Проверь форму на пропуски перед отправкой.">Проверить</button>
+              <button type="button" data-agent-prompt="Создай обращение администратору по текущему заданию.">Админ</button>
+              <button type="button" data-agent-prompt="Найди публичную справку и судебную практику по текущему вопросу.">Поиск</button>
             </div>
-
             <div class="agent-log" id="agent-log"></div>
-            <form id="agent-form" class="agent-form">
-              <textarea id="agent-input" rows="3" placeholder="Вопрос агенту"></textarea>
+            <form class="agent-form" id="agent-form">
+              <textarea id="agent-input" rows="3" placeholder="Сообщение агенту"></textarea>
               <button class="secondary-button" type="submit">Отправить</button>
             </form>
           </section>
         </aside>
-      </section>
+      </main>
     </div>
 
-    <div class="drawer-backdrop hidden" id="profile-drawer-backdrop"></div>
-    <aside class="profile-drawer hidden" id="profile-drawer" aria-hidden="true" aria-labelledby="profile-drawer-title">
-      <div class="drawer-shell">
-        <div class="drawer-header">
-          <div>
-            <div class="panel-tag">Профиль</div>
-            <h3 id="profile-drawer-title">Профиль и доступы</h3>
-          </div>
-          <button class="ghost-button compact" id="profile-drawer-close" type="button">Закрыть</button>
+    <div class="drawer-backdrop hidden" id="drawer-backdrop"></div>
+    <aside class="profile-drawer hidden" id="profile-drawer" aria-hidden="true">
+      <div class="drawer-header">
+        <div>
+          <span class="eyebrow">Профиль</span>
+          <h2>Регалии и доступы</h2>
         </div>
-        <div class="profile-drawer-content" id="profile-drawer-content">
-          <div class="empty-state">Профиль загружается.</div>
-        </div>
+        <button class="icon-button" id="drawer-close" type="button" aria-label="Закрыть">×</button>
       </div>
+      <form class="profile-form" id="profile-form">
+        <label>Имя<input name="display_name" id="profile-display-name" placeholder="ФИО эксперта" /></label>
+        <label>Регалии<textarea name="credentials" id="profile-credentials" rows="3" placeholder="Дипломы, ученые степени, должности"></textarea></label>
+        <label>Сертификаты<textarea name="certificates" id="profile-certificates" rows="3" placeholder="Сертификаты и повышение квалификации"></textarea></label>
+        <fieldset>
+          <legend>Области права</legend>
+          <div class="area-grid" id="legal-area-grid"></div>
+        </fieldset>
+        <label class="toggle-line"><input name="wants_reviewer" id="profile-wants-reviewer" type="checkbox" /> Хочу быть ревьювером</label>
+        <label>Документ<input id="credential-file" type="file" /></label>
+        <button class="secondary-button" id="upload-credential-button" type="button">Загрузить документ</button>
+        <div class="credential-list" id="credential-list"></div>
+        <button class="primary-button" type="submit">Сохранить профиль</button>
+      </form>
     </aside>
 
     <div class="toast-stack" id="toast-stack"></div>
-    <script>
-      window.__APP_BASE_PATH__ = "";
-    </script>
-    <script type="module" src="/static/js/app.js?v=cloudflare-free-v3"></script>
-    <script type="module" src="/static/js/expert_extensions.js?v=cloudflare-expert-v5"></script>
+    <script type="module" src="/static/js/app.js?v=prod-d1-ux-1"></script>
   </body>
 </html>

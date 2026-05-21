@@ -2,6 +2,10 @@
   "type": "module",
   "scripts": {
     "build:snapshot": "python scripts/build_snapshot.py",
+    "build:safe": "node scripts/build_safe_r2_bundle.js",
+    "check:worker": "node --check src/index.js",
+    "check:frontend": "node --check public/static/js/app.js",
+    "migrate:remote": "wrangler d1 migrations apply tupa-expert-production --remote --config wrangler.jsonc",
     "dry-run": "wrangler deploy --dry-run --config wrangler.jsonc"
   },
   "devDependencies": {

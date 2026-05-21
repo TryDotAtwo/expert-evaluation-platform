@@ -1,42 +1,45 @@
 # tupa-expert-free-worker
 
-entity_id=cloudflare_tupa_expert_free_worker; type=cloudflare_worker_free_hosting; state=deployable_after_auth
+entity_id=cloudflare_tupa_expert_worker; type=production_worker; state=D1_KV_R2_runtime
 
-## Назначение
+## Runtime
 
-- target=Cloudflare_Workers_Free
-- role=host_expert_platform_without_yandex_origin
-- runtime=JavaScript_Worker+Static_Assets
-- source_snapshot=local_FastAPI_file_runtime
-- yandex_dependency=false
-- persistence=Worker_isolate_memory_for_mutations
-- durable_persistence_next=D1_or_KV_after_cloudflare_account_auth
+- target_url=`https://xn--80a3aie.xn--p1ai/expert`
+- root_policy=`/` is reserved for another site and must not be handled by this Worker route.
+- storage=`D1(EXPERT_DB)+KV(EXPERT_KV)+R2(SITE_BUCKET)`
+- auth=`Email OTP through Resend`
+- agent=`OpenRouter OpenAI-compatible chat`
+- deploy=`GitHub Actions push to main`
 
-## Команды
+## Required GitHub Secrets
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+- `RESEND_API_KEY`
+- `OPENROUTER_API_KEY`
+- `SESSION_SECRET`
+- `OTP_PEPPER`
+
+## Commands
 
 ```powershell
-python scripts/build_snapshot.py
+npm install
+npm run build:safe
+npm run check:worker
+npm run check:frontend
+npm run migrate:remote
 npx.cmd wrangler deploy --dry-run --config wrangler.jsonc
-npx.cmd wrangler deploy --config wrangler.jsonc
 ```
 
-## Ограничения
+## Production Data
 
-- FastAPI container removed from runtime path because Cloudflare Containers are not part of the free hosting path.
-- Worker implements the frontend-required REST surface and serves the current static UI bundle.
-- Write actions are accepted in Worker memory for demo continuity; production persistence requires D1/KV binding and migration of the portable state store.
-- Worker never proxies to `xn--80a3aie.xn--p1ai` and never calls Yandex APIs.
+- D1 tables store users, profiles, projects, assignments, drafts, submissions, reviews, OTP, sessions, agent threads, admin requests, and audit events.
+- R2 prefix `tupa-expert-site/` stores public static assets.
+- R2 prefix `expert-documents/` stores uploaded diplomas, certificates, and credentials.
+- KV stores OTP rate limits and session cache only.
 
-## Yandex removal checklist
+## Safety
 
-- deploy `tupa-expert-free-worker`;
-- attach custom domain in Cloudflare zone;
-- move `тупа.рф` nameservers from Yandex DNS to Cloudflare DNS;
-- verify `https://тупа.рф/` or chosen route against Cloudflare Worker;
-- disable Yandex API Gateway route `/expert`;
-- delete Yandex Serverless Container `expert-eval-platform`;
-- delete Yandex Container Registry image repository when no rollback needed;
-- delete Yandex Managed OpenSearch cluster `expert-eval-search`;
-- delete Yandex YDB database `for-expert-eval` only after export/backup acceptance;
-- delete Yandex Lockbox secret `expert-eval-app-secret`;
-- remove Yandex DNS zone after Cloudflare DNS propagation.
+- Worker does not call Yandex origins.
+- Agent cannot directly mutate scores, submit forms, change admin configuration, or cross project boundaries.
+- Secrets are not committed; Worker secrets are synced from GitHub Actions.

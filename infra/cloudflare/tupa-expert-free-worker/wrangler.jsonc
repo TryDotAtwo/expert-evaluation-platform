@@ -2,7 +2,14 @@
   "name": "tupa-expert-free-worker",
   "main": "src/index.js",
   "compatibility_date": "2026-05-21",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
   "routes": [
     {
       "pattern": "xn--80a3aie.xn--p1ai/expert*",
@@ -23,8 +30,28 @@
       "bucket_name": "psychologist-bot-objects"
     }
   ],
+  "d1_databases": [
+    {
+      "binding": "EXPERT_DB",
+      "database_name": "tupa-expert-production",
+      "database_id": "f1edab30-4803-420a-8023-1cf92b677ea2"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "EXPERT_KV",
+      "id": "45ea4d1396644f9b826f27cad18d4dc0"
+    }
+  ],
   "vars": {
     "APP_HOSTING_MODE": "cloudflare_free_worker",
-    "YANDEX_ORIGIN_DISABLED": "true"
+    "YANDEX_ORIGIN_DISABLED": "true",
+    "PUBLIC_BASE_URL": "https://xn--80a3aie.xn--p1ai/expert",
+    "RESEND_FROM": "Expert Platform <noreply@xn--80a3aie.xn--p1ai>",
+    "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
+    "OPENROUTER_MODEL": "openrouter/auto",
+    "OPENROUTER_ENABLE_WEB_SEARCH": "true",
+    "ADMIN_EMAILS": "admin@xn--80a3aie.xn--p1ai",
+    "ALLOW_DEV_OTP": "false"
   }
 }
