@@ -5,6 +5,8 @@ const DOCUMENT_PREFIX = "expert-documents";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 14;
 const OTP_TTL_SECONDS = 10 * 60;
 const MAX_AGENT_MESSAGES = 12;
+const PASSWORD_MIN_LENGTH = 8;
+const PASSWORD_ITERATIONS = 120000;
 
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -59,6 +61,15 @@ function safeJsonParse(value, fallback) {
   }
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 function contentType(path) {
   const match = path.match(/\.[^.]+$/);
   return ASSET_TYPES[match?.[0] || ""] || "application/octet-stream";
@@ -108,6 +119,50 @@ async function otpHash(env, email, otp) {
 
 async function tokenHash(env, token) {
   return sha256Hex(`${token}:${env.SESSION_SECRET || "missing-session-secret"}`);
+}
+
+function bytesToHex(bytes) {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function hexToBytes(hex) {
+  const normalized = String(hex || "");
+  const bytes = new Uint8Array(normalized.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(normalized.slice(index * 2, index * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+async function derivePassword(password, saltHex, iterations = PASSWORD_ITERATIONS) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    textEncoder().encode(String(password || "")),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", salt: hexToBytes(saltHex), iterations },
+    key,
+    256
+  );
+  return bytesToHex(new Uint8Array(bits));
+}
+
+async function passwordHash(password) {
+  const salt = randomHex(16);
+  const hash = await derivePassword(password, salt);
+  return `pbkdf2_sha256$${PASSWORD_ITERATIONS}$${salt}$${hash}`;
+}
+
+async function verifyPassword(password, storedHash) {
+  const parts = String(storedHash || "").split("$");
+  if (parts.length !== 4 || parts[0] !== "pbkdf2_sha256") return false;
+  const iterations = Number.parseInt(parts[1], 10);
+  if (!Number.isFinite(iterations) || iterations < 10000) return false;
+  const actual = await derivePassword(password, parts[2], iterations);
+  return constantTimeEqual(actual, parts[3]);
 }
 
 async function readJson(request) {
@@ -259,20 +314,69 @@ async function getProfile(env, userId) {
   return env.EXPERT_DB.prepare("SELECT * FROM profiles WHERE user_id = ?").bind(userId).first();
 }
 
+async function getApplicationByEmail(env, email) {
+  return env.EXPERT_DB.prepare("SELECT * FROM registration_applications WHERE email = ?").bind(email).first();
+}
+
+async function ensureProfileForUser(env, user, application = null) {
+  const createdAt = nowIso();
+  const legalAreas = application ? safeJsonParse(application.legal_areas_json, []) : LEGAL_AREAS;
+  const wantsReviewer = application ? Boolean(application.wants_reviewer) : user.role === "reviewer";
+  const coauthorConsent = application ? Boolean(application.coauthor_consent) : false;
+  const adminCredentials = application?.admin_credentials_text || "";
+  await env.EXPERT_DB.prepare(
+    "INSERT INTO profiles (user_id, legal_areas_json, credentials_text, certificates_text, wants_reviewer, mode, created_at, updated_at, coauthor_consent, admin_credentials_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET legal_areas_json = excluded.legal_areas_json, wants_reviewer = excluded.wants_reviewer, mode = excluded.mode, updated_at = excluded.updated_at, coauthor_consent = excluded.coauthor_consent, admin_credentials_text = excluded.admin_credentials_text"
+  ).bind(
+    user.id,
+    JSON.stringify(legalAreas),
+    "",
+    "",
+    wantsReviewer ? 1 : 0,
+    "expert",
+    createdAt,
+    createdAt,
+    coauthorConsent ? 1 : 0,
+    adminCredentials
+  ).run();
+}
+
+async function createUserFromApplication(env, application) {
+  const existing = await getUserByEmail(env, application.email);
+  const role = application.wants_reviewer ? "reviewer" : "expert";
+  const updatedAt = nowIso();
+  let user = existing;
+  if (existing) {
+    await env.EXPERT_DB.prepare(
+      "UPDATE users SET display_name = ?, role = CASE WHEN role = 'admin' THEN 'admin' ELSE ? END, password_hash = ?, status = 'active', auth_provider = 'password', updated_at = ? WHERE id = ?"
+    ).bind(application.display_name, role, application.password_hash, updatedAt, existing.id).run();
+    user = await getUserById(env, existing.id);
+  } else {
+    const id = `user-${randomHex(8)}`;
+    await env.EXPERT_DB.prepare(
+      "INSERT INTO users (id, email, display_name, role, created_at, updated_at, password_hash, status, auth_provider) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(id, application.email, application.display_name, role, updatedAt, updatedAt, application.password_hash, "active", "password").run();
+    user = await getUserById(env, id);
+  }
+  await ensureProfileForUser(env, user, application);
+  await ensureUserAssignments(env, user);
+  return user;
+}
+
 async function createUserIfMissing(env, email) {
   const existing = await getUserByEmail(env, email);
   if (existing) return existing;
+  const approvedApplication = await getApplicationByEmail(env, email);
+  if (approvedApplication?.status === "approved") return createUserFromApplication(env, approvedApplication);
+  if (!adminEmails(env).has(email)) return null;
   const createdAt = nowIso();
   const id = `user-${randomHex(8)}`;
-  const role = adminEmails(env).has(email) ? "admin" : "expert";
+  const role = "admin";
   const displayName = email.split("@")[0] || "Эксперт";
   await env.EXPERT_DB.prepare(
-    "INSERT INTO users (id, email, display_name, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
-  ).bind(id, email, displayName, role, createdAt, createdAt).run();
-  await env.EXPERT_DB.prepare(
-    "INSERT INTO profiles (user_id, legal_areas_json, credentials_text, certificates_text, wants_reviewer, mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-  ).bind(id, JSON.stringify(LEGAL_AREAS), "", "", role === "reviewer" ? 1 : 0, "expert", createdAt, createdAt).run();
+    "INSERT INTO users (id, email, display_name, role, created_at, updated_at, status, auth_provider) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(id, email, displayName, role, createdAt, createdAt, "active", "otp").run();
   const user = await getUserById(env, id);
+  await ensureProfileForUser(env, user);
   await ensureUserAssignments(env, user);
   await audit(env, id, "user.created", "user", id, { email, role });
   return user;
@@ -295,6 +399,7 @@ async function accountFromRequest(env, request) {
   await env.EXPERT_DB.prepare("UPDATE sessions SET last_seen_at = ? WHERE id = ?").bind(nowIso(), session.id).run();
   const user = await getUserById(env, session.user_id);
   if (!user) return null;
+  if (user.status && user.status !== "active") return null;
   const profile = await getProfile(env, user.id);
   return { user, profile, session, tokenHash: hash };
 }
@@ -307,11 +412,12 @@ function publicUser(user, profile) {
     role: user.role,
     mode: profile?.mode || "expert",
     wants_reviewer: Boolean(profile?.wants_reviewer),
+    coauthor_consent: Boolean(profile?.coauthor_consent),
   };
 }
 
-async function sendOtpEmail(env, email, otp) {
-  if (env.ALLOW_DEV_OTP === "true") return { delivered: false, dev_otp: otp };
+async function sendEmail(env, { to, subject, text, html }) {
+  if (env.ALLOW_DEV_OTP === "true") return { delivered: false, dev: true };
   if (!env.RESEND_API_KEY) throw new Error("RESEND_API_KEY missing");
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -321,10 +427,10 @@ async function sendOtpEmail(env, email, otp) {
     },
     body: JSON.stringify({
       from: env.RESEND_FROM || "Expert Platform <onboarding@resend.dev>",
-      to: [email],
-      subject: "Код входа в экспертную платформу",
-      text: `Код входа: ${otp}. Код действует 10 минут.`,
-      html: `<p>Код входа: <strong>${otp}</strong></p><p>Код действует 10 минут.</p>`,
+      to: [to],
+      subject,
+      text,
+      html,
     }),
   });
   if (!response.ok) {
@@ -332,6 +438,30 @@ async function sendOtpEmail(env, email, otp) {
     throw new Error(`resend_failed:${response.status}:${detail.slice(0, 200)}`);
   }
   return { delivered: true };
+}
+
+async function sendOtpEmail(env, email, otp) {
+  const result = await sendEmail(env, {
+    to: email,
+    subject: "Код входа в экспертную платформу",
+    text: `Код входа: ${otp}. Код действует 10 минут.`,
+    html: `<p>Код входа: <strong>${otp}</strong></p><p>Код действует 10 минут.</p>`,
+  });
+  return { ...result, ...(result.dev ? { dev_otp: otp } : {}) };
+}
+
+async function sendApplicationDecisionEmail(env, application, decision) {
+  const approved = decision === "approved";
+  const note = application.admin_note ? `\n\nКомментарий администратора: ${application.admin_note}` : "";
+  const text = approved
+    ? `Ваша заявка в экспертную платформу принята. Можно войти на ${env.PUBLIC_BASE_URL || "https://xn--80a3aie.xn--p1ai/expert"} через email и пароль.${note}`
+    : `Ваша заявка в экспертную платформу отклонена.${note}`;
+  return sendEmail(env, {
+    to: application.email,
+    subject: approved ? "Заявка принята" : "Заявка отклонена",
+    text,
+    html: `<p>${escapeHtml(text).replaceAll("\n", "<br />")}</p>`,
+  });
 }
 
 async function requestOtp(request, env) {
@@ -370,6 +500,11 @@ async function verifyOtp(request, env) {
   }
   await env.EXPERT_DB.prepare("UPDATE otp_challenges SET consumed_at = ? WHERE id = ?").bind(nowIso(), challenge.id).run();
   const user = await createUserIfMissing(env, email);
+  if (!user) return error(403, "Аккаунт не найден или заявка еще не одобрена.");
+  return issueSession(env, user, "auth.otp_verified");
+}
+
+async function issueSession(env, user, auditAction = "auth.session_created") {
   const profile = await getProfile(env, user.id);
   const token = randomHex(32);
   const hash = await tokenHash(env, token);
@@ -379,8 +514,58 @@ async function verifyOtp(request, env) {
     "INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)"
   ).bind(randomHex(12), user.id, hash, expiresAt, createdAt, createdAt).run();
   await kvPut(env, `session:${hash}`, user.id, SESSION_TTL_SECONDS);
-  await audit(env, user.id, "auth.otp_verified", "session", user.id, {});
+  await audit(env, user.id, auditAction, "session", user.id, {});
   return json({ token, user: publicUser(user, profile), profile: serializeProfile(profile) });
+}
+
+async function passwordLogin(request, env) {
+  const body = await readJson(request);
+  const email = normalizeEmail(body.email);
+  const password = String(body.password || "");
+  if (!email || !password) return error(400, "Укажите email и пароль.");
+  const user = await getUserByEmail(env, email);
+  if (!user || (user.status && user.status !== "active") || !user.password_hash) {
+    return error(401, "Неверный email или пароль.");
+  }
+  const valid = await verifyPassword(password, user.password_hash);
+  if (!valid) return error(401, "Неверный email или пароль.");
+  return issueSession(env, user, "auth.password_login");
+}
+
+async function registerApplication(request, env) {
+  const body = await readJson(request);
+  const email = normalizeEmail(body.email);
+  const password = String(body.password || "");
+  const displayName = String(body.display_name || "").trim().slice(0, 120);
+  const contact = String(body.contact || "").trim().slice(0, 240);
+  const legalAreas = Array.isArray(body.legal_areas) ? body.legal_areas.filter((area) => LEGAL_AREAS.includes(area)) : [];
+  const wantsReviewer = Boolean(body.wants_reviewer);
+  const coauthorConsent = Boolean(body.coauthor_consent);
+  if (!email || !email.includes("@")) return error(400, "Укажите корректный email.");
+  if (password.length < PASSWORD_MIN_LENGTH) return error(400, `Пароль должен быть не короче ${PASSWORD_MIN_LENGTH} символов.`);
+  if (!displayName) return error(400, "Укажите никнейм.");
+  if (!contact) return error(400, "Укажите Telegram или другой способ связи.");
+  if (!legalAreas.length) return error(400, "Выберите хотя бы одну область права.");
+  const existing = await getUserByEmail(env, email);
+  if (existing?.status === "active") return error(409, "Аккаунт с этим email уже активен.");
+  const hashed = await passwordHash(password);
+  const createdAt = nowIso();
+  await env.EXPERT_DB.prepare(
+    "INSERT INTO registration_applications (id, email, password_hash, display_name, contact, legal_areas_json, wants_reviewer, coauthor_consent, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?) ON CONFLICT(email) DO UPDATE SET password_hash = excluded.password_hash, display_name = excluded.display_name, contact = excluded.contact, legal_areas_json = excluded.legal_areas_json, wants_reviewer = excluded.wants_reviewer, coauthor_consent = excluded.coauthor_consent, status = 'pending', admin_note = '', admin_credentials_text = '', decided_by = NULL, decided_at = NULL, updated_at = excluded.updated_at"
+  ).bind(
+    randomHex(12),
+    email,
+    hashed,
+    displayName,
+    contact,
+    JSON.stringify(legalAreas),
+    wantsReviewer ? 1 : 0,
+    coauthorConsent ? 1 : 0,
+    createdAt,
+    createdAt
+  ).run();
+  await audit(env, null, "registration.application_submitted", "registration_application", email, { legal_areas: legalAreas, wants_reviewer: wantsReviewer });
+  return json({ status: "pending", message: "Заявка отправлена. Администратор свяжется по указанному контакту." });
 }
 
 async function logout(request, env, account) {
@@ -395,6 +580,8 @@ function serializeProfile(profile) {
     credentials: profile?.credentials_text || "",
     certificates: profile?.certificates_text || "",
     wants_reviewer: Boolean(profile?.wants_reviewer),
+    coauthor_consent: Boolean(profile?.coauthor_consent),
+    admin_credentials: profile?.admin_credentials_text || "",
     mode: profile?.mode || "expert",
   };
 }
@@ -462,6 +649,9 @@ async function dashboard(env, account) {
   const adminRequests = account.user.role === "admin"
     ? (await env.EXPERT_DB.prepare("SELECT * FROM admin_requests ORDER BY created_at DESC LIMIT 30").all()).results || []
     : (await env.EXPERT_DB.prepare("SELECT * FROM admin_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 10").bind(account.user.id).all()).results || [];
+  const applications = account.user.role === "admin"
+    ? (await env.EXPERT_DB.prepare("SELECT id, email, display_name, contact, legal_areas_json, wants_reviewer, coauthor_consent, status, admin_note, admin_credentials_text, decided_by, decided_at, created_at, updated_at FROM registration_applications ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at DESC LIMIT 100").all()).results || []
+    : [];
   return json({
     user: publicUser(account.user, profile),
     role: account.user.role,
@@ -472,9 +662,15 @@ async function dashboard(env, account) {
     support_requests: adminRequests,
     admin_surface: account.user.role === "admin" ? {
       requests: adminRequests,
+      applications: applications.map((application) => ({
+        ...application,
+        legal_areas: safeJsonParse(application.legal_areas_json, []),
+        wants_reviewer: Boolean(application.wants_reviewer),
+        coauthor_consent: Boolean(application.coauthor_consent),
+      })),
       routing: projects.map((project) => ({ project_id: project.id, required_area: project.required_area, status: project.status })),
       quality: { submitted: summary.submitted || 0, approved: summary.approved || 0, needs_rework: summary.needs_rework || 0 },
-      import_export: { imports: [], exports: [] },
+      import_export: { imports: [], exports: projects.map((project) => ({ project_id: project.id, name: project.name })) },
     } : null,
   });
 }
@@ -552,6 +748,7 @@ async function updateAssignment(env, account, assignmentId, action, request) {
     await audit(env, account.user.id, "assignment.submitted", "assignment", assignmentId, {});
   } else if (action === "review") {
     if (account.user.role !== "reviewer" && account.user.role !== "admin") return error(403, "Проверка доступна только проверяющему или администратору.");
+    if (detail.assignment.status !== "submitted") return error(409, "Ревью доступно только после отправки результата экспертом.");
     const outcome = body.outcome === "needs_rework" ? "needs_rework" : "approved";
     const reviewerNote = String(payload.reviewer_note || "").trim();
     if (outcome === "needs_rework" && !reviewerNote) return error(400, "Причина отклонения обязательна.");
@@ -581,16 +778,18 @@ async function updateProfile(request, env, account) {
     ? body.legal_areas.filter((area) => LEGAL_AREAS.includes(area))
     : serializeProfile(account.profile).legal_areas;
   const wantsReviewer = Boolean(body.wants_reviewer);
-  const mode = wantsReviewer && body.mode === "reviewer" ? "reviewer" : "expert";
+  const canReview = account.user.role === "reviewer" || account.user.role === "admin";
+  const mode = canReview && body.mode === "reviewer" ? "reviewer" : "expert";
+  const coauthorConsent = Boolean(body.coauthor_consent);
   const displayName = String(body.display_name || account.user.display_name || account.user.email).trim();
   const updatedAt = nowIso();
   await env.EXPERT_DB.batch([
-    env.EXPERT_DB.prepare("UPDATE users SET display_name = ?, role = CASE WHEN role = 'admin' THEN 'admin' WHEN ? THEN 'reviewer' ELSE 'expert' END, updated_at = ? WHERE id = ?")
-      .bind(displayName, wantsReviewer ? 1 : 0, updatedAt, account.user.id),
-    env.EXPERT_DB.prepare("UPDATE profiles SET legal_areas_json = ?, credentials_text = ?, certificates_text = ?, wants_reviewer = ?, mode = ?, updated_at = ? WHERE user_id = ?")
-      .bind(JSON.stringify(legalAreas), String(body.credentials || "").trim(), String(body.certificates || "").trim(), wantsReviewer ? 1 : 0, mode, updatedAt, account.user.id),
+    env.EXPERT_DB.prepare("UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?")
+      .bind(displayName, updatedAt, account.user.id),
+    env.EXPERT_DB.prepare("UPDATE profiles SET legal_areas_json = ?, wants_reviewer = ?, mode = ?, updated_at = ?, coauthor_consent = ? WHERE user_id = ?")
+      .bind(JSON.stringify(legalAreas), wantsReviewer ? 1 : 0, mode, updatedAt, coauthorConsent ? 1 : 0, account.user.id),
   ]);
-  await audit(env, account.user.id, "profile.updated", "profile", account.user.id, { legal_areas: legalAreas, wants_reviewer: wantsReviewer });
+  await audit(env, account.user.id, "profile.updated", "profile", account.user.id, { legal_areas: legalAreas, wants_reviewer: wantsReviewer, coauthor_consent: coauthorConsent });
   const user = await getUserById(env, account.user.id);
   const profile = await getProfile(env, account.user.id);
   return json({ user: publicUser(user, profile), profile: serializeProfile(profile), legal_areas: LEGAL_AREAS });
@@ -640,11 +839,133 @@ async function switchMode(request, env, account) {
   const body = await readJson(request);
   const requested = body.mode === "reviewer" ? "reviewer" : "expert";
   const profile = await getProfile(env, account.user.id);
-  const allowed = requested === "expert" || Boolean(profile?.wants_reviewer) || account.user.role === "reviewer" || account.user.role === "admin";
-  if (!allowed) return error(403, "Режим проверяющего недоступен без отметки в профиле.");
+  const allowed = requested === "expert" || account.user.role === "reviewer" || account.user.role === "admin";
+  if (!allowed) return error(403, "Режим ревьювера доступен только после одобрения администратором.");
   await env.EXPERT_DB.prepare("UPDATE profiles SET mode = ?, updated_at = ? WHERE user_id = ?").bind(requested, nowIso(), account.user.id).run();
   await audit(env, account.user.id, "profile.mode_changed", "profile", account.user.id, { mode: requested });
   return json({ mode: requested });
+}
+
+function requireAdmin(account) {
+  return account?.user?.role === "admin";
+}
+
+async function listApplications(env) {
+  const rows = (await env.EXPERT_DB.prepare(
+    "SELECT id, email, display_name, contact, legal_areas_json, wants_reviewer, coauthor_consent, status, admin_note, admin_credentials_text, decided_by, decided_at, created_at, updated_at FROM registration_applications ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at DESC LIMIT 200"
+  ).all()).results || [];
+  return rows.map((application) => ({
+    ...application,
+    legal_areas: safeJsonParse(application.legal_areas_json, []),
+    wants_reviewer: Boolean(application.wants_reviewer),
+    coauthor_consent: Boolean(application.coauthor_consent),
+  }));
+}
+
+async function decideApplication(request, env, account, applicationId) {
+  if (!requireAdmin(account)) return error(403, "Доступно только администратору.");
+  const body = await readJson(request);
+  const decision = body.decision === "approved" ? "approved" : body.decision === "rejected" ? "rejected" : "";
+  if (!decision) return error(400, "Укажите решение: approved или rejected.");
+  const application = await env.EXPERT_DB.prepare("SELECT * FROM registration_applications WHERE id = ?").bind(applicationId).first();
+  if (!application) return error(404, "Заявка не найдена.");
+  const adminNote = String(body.admin_note || "").trim().slice(0, 1000);
+  const adminCredentials = String(body.admin_credentials || "").trim().slice(0, 2000);
+  const decidedAt = nowIso();
+  await env.EXPERT_DB.prepare(
+    "UPDATE registration_applications SET status = ?, admin_note = ?, admin_credentials_text = ?, decided_by = ?, decided_at = ?, updated_at = ? WHERE id = ?"
+  ).bind(decision, adminNote, adminCredentials, account.user.id, decidedAt, decidedAt, applicationId).run();
+  const decidedApplication = await env.EXPERT_DB.prepare("SELECT * FROM registration_applications WHERE id = ?").bind(applicationId).first();
+  let user = null;
+  if (decision === "approved") {
+    user = await createUserFromApplication(env, decidedApplication);
+  }
+  const delivery = await sendApplicationDecisionEmail(env, decidedApplication, decision).catch((reason) => ({
+    delivered: false,
+    error: String(reason?.message || reason),
+  }));
+  await audit(env, account.user.id, `registration.application_${decision}`, "registration_application", applicationId, {
+    email: application.email,
+    email_delivered: Boolean(delivery.delivered),
+  });
+  return json({
+    application: {
+      ...decidedApplication,
+      password_hash: undefined,
+      legal_areas: safeJsonParse(decidedApplication.legal_areas_json, []),
+      wants_reviewer: Boolean(decidedApplication.wants_reviewer),
+      coauthor_consent: Boolean(decidedApplication.coauthor_consent),
+    },
+    user: user ? publicUser(user, await getProfile(env, user.id)) : null,
+    email: delivery,
+  });
+}
+
+async function exportProjectResults(request, env, account) {
+  if (!requireAdmin(account)) return error(403, "Доступно только администратору.");
+  const url = new URL(request.url);
+  const projectId = String(url.searchParams.get("project_id") || "").trim();
+  const assignmentId = String(url.searchParams.get("assignment_id") || "").trim();
+  if (!projectId) return error(400, "Укажите project_id.");
+  const project = await env.EXPERT_DB.prepare("SELECT * FROM projects WHERE id = ?").bind(projectId).first();
+  if (!project) return error(404, "Проект не найден.");
+  const assignmentsSql = assignmentId
+    ? "SELECT a.*, u.email, u.display_name, u.role FROM assignments a LEFT JOIN users u ON u.id = a.user_id WHERE a.project_id = ? AND a.id = ? ORDER BY a.created_at"
+    : "SELECT a.*, u.email, u.display_name, u.role FROM assignments a LEFT JOIN users u ON u.id = a.user_id WHERE a.project_id = ? ORDER BY a.created_at";
+  const assignmentsQuery = assignmentId
+    ? env.EXPERT_DB.prepare(assignmentsSql).bind(projectId, assignmentId)
+    : env.EXPERT_DB.prepare(assignmentsSql).bind(projectId);
+  const assignments = (await assignmentsQuery.all()).results || [];
+  const exportedAssignments = [];
+  for (const assignment of assignments) {
+    const [drafts, submissions, reviews, comments] = await Promise.all([
+      env.EXPERT_DB.prepare("SELECT id, user_id, payload_json, created_at FROM assignment_drafts WHERE assignment_id = ? ORDER BY created_at").bind(assignment.id).all(),
+      env.EXPERT_DB.prepare("SELECT id, user_id, payload_json, created_at FROM submissions WHERE assignment_id = ? ORDER BY created_at").bind(assignment.id).all(),
+      env.EXPERT_DB.prepare("SELECT id, reviewer_id, outcome, payload_json, created_at FROM reviews WHERE assignment_id = ? ORDER BY created_at").bind(assignment.id).all(),
+      env.EXPERT_DB.prepare("SELECT c.id, c.user_id, c.body, c.created_at, u.display_name, u.role FROM assignment_comments c LEFT JOIN users u ON u.id = c.user_id WHERE c.assignment_id = ? ORDER BY c.created_at").bind(assignment.id).all(),
+    ]);
+    exportedAssignments.push({
+      id: assignment.id,
+      expert: { user_id: assignment.user_id, email: assignment.email, display_name: assignment.display_name, role: assignment.role },
+      task_type: assignment.task_type,
+      task_title: assignment.task_title,
+      status: assignment.status,
+      stored_status: assignment.stored_status,
+      revision: assignment.revision,
+      due_at: assignment.due_at,
+      priority: assignment.priority,
+      payload: safeJsonParse(assignment.payload_json, {}),
+      draft: safeJsonParse(assignment.draft_json, {}),
+      submission: safeJsonParse(assignment.submission_json, null),
+      review: safeJsonParse(assignment.review_json, null),
+      drafts: (drafts.results || []).map((item) => ({ ...item, payload: safeJsonParse(item.payload_json, {}) })),
+      submissions: (submissions.results || []).map((item) => ({ ...item, payload: safeJsonParse(item.payload_json, {}) })),
+      reviews: (reviews.results || []).map((item) => ({ ...item, payload: safeJsonParse(item.payload_json, {}) })),
+      comments: comments.results || [],
+      created_at: assignment.created_at,
+      updated_at: assignment.updated_at,
+    });
+  }
+  const payload = {
+    exported_at: nowIso(),
+    project: {
+      id: project.id,
+      name: project.name,
+      summary: project.summary,
+      required_area: project.required_area,
+      task_type: project.task_type,
+      status: project.status,
+    },
+    assignment_filter: assignmentId || null,
+    assignments: exportedAssignments,
+  };
+  const fileName = assignmentId ? `${projectId}-${assignmentId}.json` : `${projectId}-results.json`;
+  return new Response(JSON.stringify(payload, null, 2), {
+    headers: {
+      ...JSON_HEADERS,
+      "content-disposition": `attachment; filename="${fileName.replace(/[^a-zA-Z0-9_.-]+/g, "_")}"`,
+    },
+  });
 }
 
 function detectAgentIntent(message) {
@@ -758,6 +1079,66 @@ async function agentChat(request, env, account) {
   });
 }
 
+function googleEnabled(env) {
+  return Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
+}
+
+async function googleStart(request, env) {
+  if (!googleEnabled(env)) return error(501, "Google вход не настроен. Нужны GOOGLE_CLIENT_ID и GOOGLE_CLIENT_SECRET.");
+  const url = new URL(request.url);
+  const redirectUri = env.GOOGLE_REDIRECT_URI || `${url.origin}/api/auth/google/callback`;
+  const state = randomHex(16);
+  await kvPut(env, `google-oauth:${state}`, redirectUri, 600);
+  const googleUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  googleUrl.searchParams.set("client_id", env.GOOGLE_CLIENT_ID);
+  googleUrl.searchParams.set("redirect_uri", redirectUri);
+  googleUrl.searchParams.set("response_type", "code");
+  googleUrl.searchParams.set("scope", "openid email profile");
+  googleUrl.searchParams.set("state", state);
+  googleUrl.searchParams.set("prompt", "select_account");
+  return Response.redirect(googleUrl.toString(), 302);
+}
+
+async function googleCallback(request, env) {
+  if (!googleEnabled(env)) return error(501, "Google вход не настроен.");
+  const url = new URL(request.url);
+  const state = String(url.searchParams.get("state") || "");
+  const code = String(url.searchParams.get("code") || "");
+  const redirectUri = await kvGet(env, `google-oauth:${state}`);
+  if (!state || !code || !redirectUri) return error(400, "Google вход не подтвержден.");
+  await kvDelete(env, `google-oauth:${state}`);
+  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+      code,
+      grant_type: "authorization_code",
+      redirect_uri: redirectUri,
+    }),
+  });
+  if (!tokenResponse.ok) return error(502, "Google не выдал токен.");
+  const tokenData = await tokenResponse.json();
+  const userResponse = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+    headers: { authorization: `Bearer ${tokenData.access_token}` },
+  });
+  if (!userResponse.ok) return error(502, "Google не вернул профиль.");
+  const googleUser = await userResponse.json();
+  const email = normalizeEmail(googleUser.email);
+  if (!email || googleUser.email_verified === false) return error(403, "Google email не подтвержден.");
+  let user = await getUserByEmail(env, email);
+  if (!user) {
+    const application = await getApplicationByEmail(env, email);
+    if (application?.status === "approved") user = await createUserFromApplication(env, application);
+  }
+  if (!user || (user.status && user.status !== "active")) return error(403, "Аккаунт не найден или заявка еще не одобрена.");
+  const sessionResponse = await issueSession(env, user, "auth.google_login");
+  const session = await sessionResponse.json();
+  const html = `<!doctype html><meta charset="utf-8"><script>localStorage.setItem("expert_platform_token", ${JSON.stringify(session.token)}); location.replace("/expert");</script>`;
+  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+}
+
 async function serveStatic(request, env) {
   const url = new URL(request.url);
   const pathname = url.pathname === "/expert" || url.pathname === "/expert/"
@@ -793,9 +1174,13 @@ async function handleApi(request, env) {
   const url = new URL(request.url);
   const path = url.pathname;
   if (path === "/health") return json({ status: "ok", hosting: "cloudflare_worker_d1_r2_kv", root_policy: "reserved" });
-  if (path === "/api/meta") return json({ legal_areas: LEGAL_AREAS, agent_policy: AGENT_POLICY });
+  if (path === "/api/meta") return json({ legal_areas: LEGAL_AREAS, agent_policy: AGENT_POLICY, google_auth_enabled: googleEnabled(env) });
   if (path === "/api/auth/otp/request" && request.method === "POST") return requestOtp(request, env);
   if (path === "/api/auth/otp/verify" && request.method === "POST") return verifyOtp(request, env);
+  if (path === "/api/auth/password/login" && request.method === "POST") return passwordLogin(request, env);
+  if (path === "/api/auth/register" && request.method === "POST") return registerApplication(request, env);
+  if (path === "/api/auth/google/start") return googleStart(request, env);
+  if (path === "/api/auth/google/callback") return googleCallback(request, env);
   const account = await accountFromRequest(env, request);
   if (!account) return error(401, "Требуется вход.");
   if (path === "/api/auth/logout" && request.method === "POST") return logout(request, env, account);
@@ -811,6 +1196,13 @@ async function handleApi(request, env) {
   if (path === "/api/projects/join" && request.method === "POST") return joinProject(request, env, account);
   if (path === "/api/mode" && request.method === "POST") return switchMode(request, env, account);
   if (path === "/api/agent/chat" && request.method === "POST") return agentChat(request, env, account);
+  if (path === "/api/admin/applications" && request.method === "GET") {
+    if (!requireAdmin(account)) return error(403, "Доступно только администратору.");
+    return json({ applications: await listApplications(env) });
+  }
+  const applicationDecisionMatch = path.match(/^\/api\/admin\/applications\/([^/]+)\/decision$/);
+  if (applicationDecisionMatch && request.method === "POST") return decideApplication(request, env, account, applicationDecisionMatch[1]);
+  if (path === "/api/admin/export" && request.method === "GET") return exportProjectResults(request, env, account);
   const assignmentMatch = path.match(/^\/api\/assignments\/([^/]+)(?:\/([^/]+))?$/);
   if (assignmentMatch) {
     const [, assignmentId, action] = assignmentMatch;

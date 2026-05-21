@@ -60,11 +60,15 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
           OTP_PEPPER: ${{ secrets.OTP_PEPPER }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
         run: |
           printf '%s' "$RESEND_API_KEY" | npx wrangler secret put RESEND_API_KEY --config wrangler.jsonc
           printf '%s' "$OPENROUTER_API_KEY" | npx wrangler secret put OPENROUTER_API_KEY --config wrangler.jsonc
           printf '%s' "$SESSION_SECRET" | npx wrangler secret put SESSION_SECRET --config wrangler.jsonc
           printf '%s' "$OTP_PEPPER" | npx wrangler secret put OTP_PEPPER --config wrangler.jsonc
+          if [ -n "$GOOGLE_CLIENT_ID" ]; then printf '%s' "$GOOGLE_CLIENT_ID" | npx wrangler secret put GOOGLE_CLIENT_ID --config wrangler.jsonc; fi
+          if [ -n "$GOOGLE_CLIENT_SECRET" ]; then printf '%s' "$GOOGLE_CLIENT_SECRET" | npx wrangler secret put GOOGLE_CLIENT_SECRET --config wrangler.jsonc; fi
 
       - name: Upload R2 assets
         env:

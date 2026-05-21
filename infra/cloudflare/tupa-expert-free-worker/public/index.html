@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Экспертная платформа</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/static/css/app.css?v=prod-d1-ux-5" />
+    <link rel="stylesheet" href="/static/css/app.css?v=prod-d1-ux-7" />
   </head>
   <body>
     <div class="app-shell">
@@ -28,20 +28,40 @@
       </header>
 
       <main class="auth-screen" id="auth-screen">
-        <section class="auth-panel">
-          <div class="auth-copy">
+        <section class="auth-panel auth-workplace">
+          <div class="auth-header">
             <h1>Рабочее место эксперта</h1>
-            <p>Вход по email-коду. После входа доступны профиль, регалии, области права, очередь заданий, режим ревью и агент платформы.</p>
+            <div class="auth-tabs" id="auth-tabs">
+              <button class="active" type="button" data-auth-mode="login">Вход</button>
+              <button type="button" data-auth-mode="register">Регистрация</button>
+            </div>
           </div>
-          <form class="otp-form" id="otp-request-form">
-            <label>Email<input id="otp-email" type="email" autocomplete="email" placeholder="name@example.com" required /></label>
-            <button class="primary-button" type="submit">Получить код</button>
-          </form>
-          <form class="otp-form hidden" id="otp-verify-form">
-            <label>Код<input id="otp-code" inputmode="numeric" maxlength="6" placeholder="000000" required /></label>
+          <form class="auth-form" id="password-login-form">
+            <label>Email<input id="login-email" type="email" autocomplete="email" placeholder="name@example.com" required /></label>
+            <label>Пароль<input id="login-password" type="password" autocomplete="current-password" placeholder="••••••••" required /></label>
             <button class="primary-button" type="submit">Войти</button>
+            <button class="google-button" id="google-login-button" type="button">Войти с Google</button>
           </form>
-          <div class="form-note" id="auth-note">Корень домена зарезервирован. Платформа работает только на /expert.</div>
+          <form class="auth-form hidden" id="registration-form">
+            <div class="form-row">
+              <label>Email<input id="register-email" type="email" autocomplete="email" placeholder="name@example.com" required /></label>
+              <label>Пароль<input id="register-password" type="password" autocomplete="new-password" minlength="8" placeholder="минимум 8 символов" required /></label>
+            </div>
+            <div class="form-row">
+              <label>Никнейм<input id="register-display-name" autocomplete="nickname" placeholder="как показывать внутри платформы" required /></label>
+              <label>Связь<input id="register-contact" placeholder="@telegram или другой контакт" required /></label>
+            </div>
+            <fieldset>
+              <legend>Области права</legend>
+              <div class="area-grid compact" id="registration-area-grid"></div>
+            </fieldset>
+            <div class="check-stack">
+              <label class="toggle-line"><input id="register-coauthor-consent" type="checkbox" /> Хочу, чтобы упоминали в статьях как соавтора/эксперта</label>
+              <label class="toggle-line"><input id="register-wants-reviewer" type="checkbox" /> Хочу быть ревьювером</label>
+            </div>
+            <button class="primary-button" type="submit">Отправить заявку</button>
+          </form>
+          <div class="form-note" id="auth-note"></div>
         </section>
       </main>
 
@@ -106,27 +126,23 @@
       <div class="drawer-header">
         <div>
           <span class="eyebrow">Профиль</span>
-          <h2>Регалии и доступы</h2>
+          <h2>Профиль и доступы</h2>
         </div>
         <button class="icon-button" id="drawer-close" type="button" aria-label="Закрыть">×</button>
       </div>
       <form class="profile-form" id="profile-form">
-        <label>Имя<input name="display_name" id="profile-display-name" placeholder="ФИО эксперта" /></label>
-        <label>Регалии<textarea name="credentials" id="profile-credentials" rows="3" placeholder="Дипломы, ученые степени, должности"></textarea></label>
-        <label>Сертификаты<textarea name="certificates" id="profile-certificates" rows="3" placeholder="Сертификаты и повышение квалификации"></textarea></label>
+        <label>Никнейм<input name="display_name" id="profile-display-name" placeholder="как показывать внутри платформы" /></label>
         <fieldset>
           <legend>Области права</legend>
           <div class="area-grid" id="legal-area-grid"></div>
         </fieldset>
+        <label class="toggle-line"><input name="coauthor_consent" id="profile-coauthor-consent" type="checkbox" /> Хочу, чтобы упоминали в статьях как соавтора/эксперта</label>
         <label class="toggle-line"><input name="wants_reviewer" id="profile-wants-reviewer" type="checkbox" /> Хочу быть ревьювером</label>
-        <label>Документ<input id="credential-file" type="file" /></label>
-        <button class="secondary-button" id="upload-credential-button" type="button">Загрузить документ</button>
-        <div class="credential-list" id="credential-list"></div>
         <button class="primary-button" type="submit">Сохранить профиль</button>
       </form>
     </aside>
 
     <div class="toast-stack" id="toast-stack"></div>
-    <script type="module" src="/static/js/app.js?v=prod-d1-ux-5"></script>
+    <script type="module" src="/static/js/app.js?v=prod-d1-ux-7"></script>
   </body>
 </html>
