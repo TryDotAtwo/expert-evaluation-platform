@@ -263,6 +263,16 @@ button:disabled {
   padding: 9px 13px;
 }
 
+.link-button {
+  justify-self: center;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 4px 8px;
+}
+
 .check-stack {
   display: grid;
   gap: 8px;

@@ -23,6 +23,12 @@ const els = {
   loginEmail: document.getElementById("login-email"),
   loginPassword: document.getElementById("login-password"),
   googleLoginButton: document.getElementById("google-login-button"),
+  passwordSetupOpen: document.getElementById("password-setup-open"),
+  passwordSetupForm: document.getElementById("password-setup-form"),
+  passwordSetupRequest: document.getElementById("password-setup-request"),
+  setupEmail: document.getElementById("setup-email"),
+  setupPassword: document.getElementById("setup-password"),
+  setupCode: document.getElementById("setup-code"),
   registrationForm: document.getElementById("registration-form"),
   registerEmail: document.getElementById("register-email"),
   registerPassword: document.getElementById("register-password"),
@@ -805,10 +811,12 @@ async function boot() {
 
 function setAuthMode(mode) {
   const registerMode = mode === "register";
-  els.passwordLoginForm?.classList.toggle("hidden", registerMode);
+  const setupMode = mode === "setup";
+  els.passwordLoginForm?.classList.toggle("hidden", registerMode || setupMode);
   els.registrationForm?.classList.toggle("hidden", !registerMode);
+  els.passwordSetupForm?.classList.toggle("hidden", !setupMode);
   els.authTabs?.querySelectorAll("[data-auth-mode]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.authMode === mode);
+    button.classList.toggle("active", button.dataset.authMode === (setupMode ? "login" : mode));
   });
   els.authNote.textContent = "";
 }
@@ -832,6 +840,40 @@ els.passwordLoginForm?.addEventListener("submit", async (event) => {
     await loadDashboard();
   } catch (error) {
     setSync("ошибка");
+    els.authNote.textContent = error.message;
+  }
+});
+
+els.passwordSetupOpen?.addEventListener("click", () => {
+  els.setupEmail.value = els.loginEmail.value.trim();
+  setAuthMode("setup");
+});
+
+els.passwordSetupRequest?.addEventListener("click", async () => {
+  try {
+    const result = await api("/api/auth/password/setup/request", {
+      method: "POST",
+      body: JSON.stringify({ email: els.setupEmail.value.trim() }),
+    });
+    els.authNote.textContent = result.dev_otp ? `Тестовый код: ${result.dev_otp}` : "Код отправлен на email.";
+  } catch (error) {
+    els.authNote.textContent = error.message;
+  }
+});
+
+els.passwordSetupForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    const result = await api("/api/auth/password/setup/verify", {
+      method: "POST",
+      body: JSON.stringify({ email: els.setupEmail.value.trim(), otp: els.setupCode.value.trim(), password: els.setupPassword.value }),
+    });
+    state.token = result.token;
+    state.session = result.user;
+    localStorage.setItem("expert_platform_token", state.token);
+    renderChrome();
+    await loadDashboard();
+  } catch (error) {
     els.authNote.textContent = error.message;
   }
 });

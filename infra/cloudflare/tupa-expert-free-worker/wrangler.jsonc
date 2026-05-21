@@ -51,7 +51,7 @@
     "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
     "OPENROUTER_MODEL": "openrouter/auto",
     "OPENROUTER_ENABLE_WEB_SEARCH": "true",
-    "ADMIN_EMAILS": "admin@xn--80a3aie.xn--p1ai",
+    "ADMIN_EMAILS": "admin@xn--80a3aie.xn--p1ai,vanya.litvak@gmail.com",
     "ALLOW_DEV_OTP": "false"
   }
 }

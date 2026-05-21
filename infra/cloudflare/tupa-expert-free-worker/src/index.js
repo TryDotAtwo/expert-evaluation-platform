@@ -400,6 +400,10 @@ async function accountFromRequest(env, request) {
   const user = await getUserById(env, session.user_id);
   if (!user) return null;
   if (user.status && user.status !== "active") return null;
+  if (adminEmails(env).has(user.email) && user.role !== "admin") {
+    user.role = "admin";
+    await env.EXPERT_DB.prepare("UPDATE users SET role = 'admin', updated_at = ? WHERE id = ?").bind(nowIso(), user.id).run();
+  }
   const profile = await getProfile(env, user.id);
   return { user, profile, session, tokenHash: hash };
 }
@@ -525,11 +529,63 @@ async function passwordLogin(request, env) {
   if (!email || !password) return error(400, "Укажите email и пароль.");
   const user = await getUserByEmail(env, email);
   if (!user || (user.status && user.status !== "active") || !user.password_hash) {
+    if (user && !user.password_hash) return error(428, "Для этого аккаунта нужно установить пароль через email-код.");
     return error(401, "Неверный email или пароль.");
   }
   const valid = await verifyPassword(password, user.password_hash);
   if (!valid) return error(401, "Неверный email или пароль.");
   return issueSession(env, user, "auth.password_login");
+}
+
+async function requestPasswordSetup(request, env) {
+  const body = await readJson(request);
+  const email = normalizeEmail(body.email);
+  if (!email || !email.includes("@")) return error(400, "Укажите корректный email.");
+  const user = await getUserByEmail(env, email);
+  const application = await getApplicationByEmail(env, email);
+  const allowed = Boolean(user?.status === "active" || application?.status === "approved" || adminEmails(env).has(email));
+  if (!allowed) return error(403, "Аккаунт не найден или заявка еще не одобрена.");
+  return requestOtp(new Request(request.url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email }),
+  }), env);
+}
+
+async function setupPassword(request, env) {
+  const body = await readJson(request);
+  const email = normalizeEmail(body.email);
+  const otp = String(body.otp || "").trim();
+  const password = String(body.password || "");
+  if (!email || !otp) return error(400, "Укажите email и код.");
+  if (password.length < PASSWORD_MIN_LENGTH) return error(400, `Пароль должен быть не короче ${PASSWORD_MIN_LENGTH} символов.`);
+  const challenge = await env.EXPERT_DB.prepare(
+    "SELECT * FROM otp_challenges WHERE email = ? AND consumed_at IS NULL AND expires_at > ? ORDER BY created_at DESC LIMIT 1"
+  ).bind(email, nowIso()).first();
+  if (!challenge) return error(401, "Код не найден или срок действия истек.");
+  if (challenge.attempts >= 5) return error(429, "Слишком много попыток.");
+  const actualHash = await otpHash(env, email, otp);
+  if (!constantTimeEqual(actualHash, challenge.otp_hash)) {
+    await env.EXPERT_DB.prepare("UPDATE otp_challenges SET attempts = attempts + 1 WHERE id = ?").bind(challenge.id).run();
+    return error(401, "Код неверный.");
+  }
+  await env.EXPERT_DB.prepare("UPDATE otp_challenges SET consumed_at = ? WHERE id = ?").bind(nowIso(), challenge.id).run();
+  let user = await getUserByEmail(env, email);
+  if (!user) {
+    const application = await getApplicationByEmail(env, email);
+    if (application?.status === "approved") user = await createUserFromApplication(env, application);
+  }
+  if (!user && adminEmails(env).has(email)) {
+    user = await createUserIfMissing(env, email);
+  }
+  if (!user || (user.status && user.status !== "active")) return error(403, "Аккаунт не найден или заявка еще не одобрена.");
+  const hashed = await passwordHash(password);
+  const roleSql = adminEmails(env).has(email) ? ", role = 'admin'" : "";
+  await env.EXPERT_DB.prepare(`UPDATE users SET password_hash = ?, auth_provider = 'password', updated_at = ?${roleSql} WHERE id = ?`)
+    .bind(hashed, nowIso(), user.id).run();
+  const updatedUser = await getUserById(env, user.id);
+  await audit(env, user.id, "auth.password_setup", "user", user.id, {});
+  return issueSession(env, updatedUser, "auth.password_setup_login");
 }
 
 async function registerApplication(request, env) {
@@ -1178,6 +1234,8 @@ async function handleApi(request, env) {
   if (path === "/api/auth/otp/request" && request.method === "POST") return requestOtp(request, env);
   if (path === "/api/auth/otp/verify" && request.method === "POST") return verifyOtp(request, env);
   if (path === "/api/auth/password/login" && request.method === "POST") return passwordLogin(request, env);
+  if (path === "/api/auth/password/setup/request" && request.method === "POST") return requestPasswordSetup(request, env);
+  if (path === "/api/auth/password/setup/verify" && request.method === "POST") return setupPassword(request, env);
   if (path === "/api/auth/register" && request.method === "POST") return registerApplication(request, env);
   if (path === "/api/auth/google/start") return googleStart(request, env);
   if (path === "/api/auth/google/callback") return googleCallback(request, env);
