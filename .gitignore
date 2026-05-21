@@ -1,0 +1,7 @@
+node_modules/
+.wrangler/
+public_safe/
+data/
+.tmp-state.json
+.env
+*.log

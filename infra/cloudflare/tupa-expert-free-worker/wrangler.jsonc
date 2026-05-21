@@ -1,0 +1,30 @@
+{
+  "name": "tupa-expert-free-worker",
+  "main": "src/index.js",
+  "compatibility_date": "2026-05-21",
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "xn--80a3aie.xn--p1ai/expert*",
+      "zone_name": "xn--80a3aie.xn--p1ai"
+    },
+    {
+      "pattern": "xn--80a3aie.xn--p1ai/api/*",
+      "zone_name": "xn--80a3aie.xn--p1ai"
+    },
+    {
+      "pattern": "xn--80a3aie.xn--p1ai/static/*",
+      "zone_name": "xn--80a3aie.xn--p1ai"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "SITE_BUCKET",
+      "bucket_name": "psychologist-bot-objects"
+    }
+  ],
+  "vars": {
+    "APP_HOSTING_MODE": "cloudflare_free_worker",
+    "YANDEX_ORIGIN_DISABLED": "true"
+  }
+}

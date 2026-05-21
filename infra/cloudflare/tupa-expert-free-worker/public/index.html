@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Платформа оценки экспертами</title>
+    <link rel="stylesheet" href="/static/css/app.css?v=cloudflare-free" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Платформа оценки экспертами</h1>
+          <p class="subtle">Рабочее место эксперта, проверяющего и администратора.</p>
+        </div>
+        <div class="topbar-actions">
+          <div class="sync-pill" id="sync-status">Готово</div>
+          <div class="user-badge hidden" id="user-badge"></div>
+          <button class="ghost-button hidden" id="logout-button" type="button">Выйти</button>
+        </div>
+      </header>
+
+      <section class="auth-view" id="login-view">
+        <div class="auth-card">
+          <div class="panel-tag">Вход</div>
+          <h2>Рабочее место</h2>
+          <p class="subtle">Доступны экспертная оценка, проверка, история черновиков и административные настройки.</p>
+          <form id="login-form" class="auth-form">
+            <label>
+              Имя пользователя
+              <input id="login-username" autocomplete="username" placeholder="Введите имя пользователя" />
+            </label>
+            <label>
+              Пароль
+              <input id="login-password" type="password" autocomplete="current-password" placeholder="Введите пароль" />
+            </label>
+            <button class="primary-button" type="submit">Войти</button>
+          </form>
+          <details class="demo-credentials disclosure">
+            <summary>Тестовые учетные записи</summary>
+            <div class="disclosure-body">
+              <div>Тестовые учетные записи выдаются оператором стенда.</div>
+            </div>
+          </details>
+          <div class="error-box hidden" id="login-error"></div>
+        </div>
+      </section>
+
+      <section class="workspace hidden" id="workspace-view">
+        <aside class="sidebar panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-tag">Навигация</div>
+              <h3>Очередь</h3>
+            </div>
+            <button class="ghost-button compact" id="refresh-button" type="button">Обновить</button>
+          </div>
+
+          <div class="summary-grid" id="summary-grid"></div>
+
+          <div class="section-block">
+            <div class="section-title">Задания</div>
+            <div id="assignments-list" class="stack-list assignments"></div>
+          </div>
+        </aside>
+
+        <main class="board">
+          <section class="panel project-dock" id="project-dock">
+            <div class="panel-header compact-header">
+              <div>
+                <div class="panel-tag">Проекты</div>
+                <h3>Контекст работы</h3>
+              </div>
+            </div>
+            <div id="projects-list" class="project-strip"></div>
+          </section>
+
+          <section class="panel hero-panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-tag">Текущее задание</div>
+                <h2 id="hero-title">Выберите задание</h2>
+                <p class="subtle" id="hero-subtitle">Форма оценки зависит от типа задания и истории проверки.</p>
+              </div>
+              <div class="hero-meta">
+                <div class="status-chip" id="assignment-status">Не выбрано</div>
+                <div class="revision-chip" id="assignment-revision">версия -</div>
+              </div>
+            </div>
+
+            <div class="assignment-guidance" id="assignment-guidance"></div>
+
+            <div class="completion-strip">
+              <div class="completion-bar"><span id="completion-bar"></span></div>
+              <div class="completion-caption" id="completion-caption">0%</div>
+            </div>
+
+            <div class="hero-actions">
+              <button class="primary-button" id="submit-button" type="button">Отправить</button>
+              <button class="secondary-button hidden" id="review-approve-button" type="button">Принять проверку</button>
+              <button class="ghost-button hidden" id="review-rework-button" type="button">Вернуть на доработку</button>
+              <button class="secondary-button hidden" id="review-adjudicate-button" type="button">Закрыть спор</button>
+              <button class="ghost-button" id="reload-assignment-button" type="button">Перезагрузить</button>
+            </div>
+          </section>
+
+          <section class="panel admin-workspace hidden" id="admin-panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-tag">Администратор</div>
+                <h3>Управление платформой</h3>
+              </div>
+            </div>
+            <div id="admin-workspace-content"></div>
+            <div class="admin-columns">
+              <div class="section-block">
+                <div class="section-title">Проекты и схемы</div>
+                <div id="admin-control-plane" class="stack-list"></div>
+              </div>
+              <div class="section-block">
+                <div class="section-title">Предпросмотр схем</div>
+                <div id="admin-schema-previews" class="stack-list"></div>
+              </div>
+              <div class="section-block">
+                <div class="section-title">Качество</div>
+                <div id="admin-quality-summary" class="stack-list"></div>
+              </div>
+              <div class="section-block">
+                <div class="section-title">Обращения</div>
+                <div id="admin-support" class="stack-list"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel task-panel" id="task-panel">
+            <div class="empty-state">
+              <h3>Форма задания</h3>
+              <p>Выберите задание слева.</p>
+            </div>
+          </section>
+        </main>
+
+        <aside class="rail">
+          <section class="panel rail-panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-tag">Справка</div>
+                <h3>Подсказка к заданию</h3>
+              </div>
+            </div>
+            <div id="help-list" class="stack-list"></div>
+            <article class="help-article" id="help-article">
+              <p class="subtle">Выберите статью справки или задайте вопрос помощнику.</p>
+            </article>
+          </section>
+
+          <section class="panel rail-panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-tag">Помощник</div>
+                <h3>Безопасный помощник</h3>
+              </div>
+            </div>
+            <div class="mcp-note">
+              Помощник объясняет задания, ищет справку и создает обращения. Изменение оценок и настроек запрещено без отдельного подтверждения.
+            </div>
+            <div class="agent-log" id="agent-log"></div>
+            <form id="agent-form" class="agent-form">
+              <textarea id="agent-input" rows="3" placeholder="Например: объясни задание или создай обращение"></textarea>
+              <button class="secondary-button" type="submit">Отправить</button>
+            </form>
+          </section>
+
+          <section class="panel rail-panel hidden" id="admin-panel-legacy">
+            <div class="panel-header">
+              <div>
+                <div class="panel-tag">Администратор</div>
+                <h3>Управление платформой</h3>
+              </div>
+            </div>
+            <div class="section-block">
+              <div class="section-title">Проекты и схемы</div>
+              <div id="admin-control-plane" class="stack-list"></div>
+            </div>
+            <div class="section-block">
+              <div class="section-title">Предпросмотр схем</div>
+              <div id="admin-schema-previews" class="stack-list"></div>
+            </div>
+            <div class="section-block">
+              <div class="section-title">Качество</div>
+              <div id="admin-quality-summary" class="stack-list"></div>
+            </div>
+            <div class="section-block">
+              <div class="section-title">Обращения</div>
+              <div id="admin-support" class="stack-list"></div>
+            </div>
+          </section>
+        </aside>
+      </section>
+    </div>
+
+    <div class="toast-stack" id="toast-stack"></div>
+    <script>
+      window.__APP_BASE_PATH__ = "";
+    </script>
+    <script type="module" src="/static/js/app.js?v=cloudflare-free"></script>
+    <script type="module" src="/static/js/expert_extensions.js?v=cloudflare-expert-v3"></script>
+  </body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "type": "module",
+  "scripts": {
+    "build:snapshot": "python scripts/build_snapshot.py",
+    "dry-run": "wrangler deploy --dry-run --config wrangler.jsonc"
+  },
+  "devDependencies": {
+    "wrangler": "^4.93.0"
+  }
+}
