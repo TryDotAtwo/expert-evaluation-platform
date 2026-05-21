@@ -488,6 +488,9 @@ async function assignmentDetail(env, account, assignmentId) {
   const drafts = (await env.EXPERT_DB.prepare("SELECT * FROM assignment_drafts WHERE assignment_id = ? ORDER BY created_at DESC LIMIT 8").bind(row.id).all()).results || [];
   const submissions = (await env.EXPERT_DB.prepare("SELECT * FROM submissions WHERE assignment_id = ? ORDER BY created_at DESC LIMIT 8").bind(row.id).all()).results || [];
   const reviews = (await env.EXPERT_DB.prepare("SELECT * FROM reviews WHERE assignment_id = ? ORDER BY created_at DESC LIMIT 8").bind(row.id).all()).results || [];
+  const comments = (await env.EXPERT_DB.prepare(
+    "SELECT c.id, c.assignment_id, c.user_id, c.body, c.created_at, u.display_name, u.role FROM assignment_comments c LEFT JOIN users u ON u.id = c.user_id WHERE c.assignment_id = ? ORDER BY c.created_at ASC LIMIT 80"
+  ).bind(row.id).all()).results || [];
   const assignment = {
     ...assignmentCard(row, project),
     stored_status: row.stored_status,
@@ -516,6 +519,7 @@ async function assignmentDetail(env, account, assignmentId) {
       submissions,
       reviews,
     },
+    comments,
     security_policy: AGENT_POLICY,
   };
 }
@@ -549,13 +553,22 @@ async function updateAssignment(env, account, assignmentId, action, request) {
   } else if (action === "review") {
     if (account.user.role !== "reviewer" && account.user.role !== "admin") return error(403, "Проверка доступна только проверяющему или администратору.");
     const outcome = body.outcome === "needs_rework" ? "needs_rework" : "approved";
+    const reviewerNote = String(payload.reviewer_note || "").trim();
+    if (outcome === "needs_rework" && !reviewerNote) return error(400, "Причина отклонения обязательна.");
+    const reviewPayload = { ...payload, reviewer_note: reviewerNote || "Проверка принята." };
     await env.EXPERT_DB.batch([
       env.EXPERT_DB.prepare("UPDATE assignments SET status = ?, stored_status = ?, review_json = ?, updated_at = ? WHERE id = ?")
-        .bind(outcome, outcome, JSON.stringify(payload), createdAt, assignmentId),
+        .bind(outcome, outcome, JSON.stringify(reviewPayload), createdAt, assignmentId),
       env.EXPERT_DB.prepare("INSERT INTO reviews (id, assignment_id, reviewer_id, outcome, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-        .bind(randomHex(12), assignmentId, account.user.id, outcome, JSON.stringify(payload), createdAt),
+        .bind(randomHex(12), assignmentId, account.user.id, outcome, JSON.stringify(reviewPayload), createdAt),
     ]);
     await audit(env, account.user.id, "assignment.reviewed", "assignment", assignmentId, { outcome });
+  } else if (action === "comment") {
+    const message = String(body.message || "").trim();
+    if (!message) return error(400, "Сообщение не должно быть пустым.");
+    await env.EXPERT_DB.prepare("INSERT INTO assignment_comments (id, assignment_id, user_id, body, created_at) VALUES (?, ?, ?, ?, ?)")
+      .bind(randomHex(12), assignmentId, account.user.id, message, createdAt).run();
+    await audit(env, account.user.id, "assignment.comment_added", "assignment", assignmentId, {});
   } else {
     return error(404, "Действие задания не найдено.");
   }

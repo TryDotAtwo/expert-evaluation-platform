@@ -5,13 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Экспертная платформа</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/static/css/app.css?v=prod-d1-ux-3" />
+    <link rel="stylesheet" href="/static/css/app.css?v=prod-d1-ux-5" />
   </head>
   <body>
     <div class="app-shell">
       <header class="topbar">
         <div class="brand">
-          <div class="brand-mark">Э</div>
+          <button class="brand-mark" id="menu-toggle" type="button" aria-label="Свернуть меню" aria-expanded="true">Э</button>
           <div>
             <strong>Экспертная платформа</strong>
             <span>тупа.рф/expert</span>
@@ -46,11 +46,11 @@
       </main>
 
       <main class="workspace hidden" id="workspace">
-        <aside class="queue-rail">
+        <aside class="queue-rail" id="queue-rail">
           <div class="rail-header">
             <div>
-              <span class="eyebrow">Очередь</span>
-              <h2>Задания</h2>
+              <span class="eyebrow">Меню</span>
+              <h2>Проекты и задания</h2>
             </div>
             <div class="rail-tools">
               <div class="status-pill" id="sync-status">готово</div>
@@ -61,19 +61,15 @@
             <button type="button" data-mode="expert" class="active">Эксперт</button>
             <button type="button" data-mode="reviewer">Ревью</button>
           </div>
-          <div class="metric-grid" id="summary-grid"></div>
-          <div class="queue-filters" id="queue-filters">
-            <button class="active" type="button" data-filter="all">Все</button>
-            <button type="button" data-filter="assigned">Назначено</button>
-            <button type="button" data-filter="draft_saved">Черновики</button>
-            <button type="button" data-filter="submitted">Отправлено</button>
-          </div>
-          <label class="search-box">Поиск<input id="assignment-search" placeholder="тип, проект, статус" /></label>
-          <div class="assignment-list" id="assignment-list"></div>
-          <details class="compact-projects">
-            <summary>Проекты и доступы</summary>
-            <div id="compact-project-list"></div>
-          </details>
+          <section class="menu-section">
+            <div class="menu-section-title">Проекты</div>
+            <div class="project-menu-list" id="compact-project-list"></div>
+          </section>
+          <label class="search-box">Поиск задания<input id="assignment-search" placeholder="название, тип, статус" /></label>
+          <section class="menu-section menu-section-grow">
+            <div class="menu-section-title">Задания</div>
+            <div class="assignment-list" id="assignment-list"></div>
+          </section>
         </aside>
 
         <section class="workbench">
@@ -91,20 +87,9 @@
             <div class="agent-head">
               <div>
                 <span class="eyebrow">ИИ-агент</span>
-                <h2>Агент платформы</h2>
+                <h2>Чат с агентом</h2>
               </div>
               <div class="agent-live">online</div>
-            </div>
-            <div class="agent-context">
-              <div><span>Контекст</span><strong id="agent-task">задание не выбрано</strong></div>
-              <div><span>Память</span><strong id="agent-memory">D1 thread</strong></div>
-              <div><span>Безопасность</span><strong>без прямых мутаций</strong></div>
-            </div>
-            <div class="agent-actions">
-              <button type="button" data-agent-prompt="Объясни текущее задание и критерии.">Объяснить</button>
-              <button type="button" data-agent-prompt="Проверь форму на пропуски перед отправкой.">Проверить</button>
-              <button type="button" data-agent-prompt="Создай обращение администратору по текущему заданию.">Админ</button>
-              <button type="button" data-agent-prompt="Найди публичную справку и судебную практику по текущему вопросу.">Поиск</button>
             </div>
             <div class="agent-log" id="agent-log"></div>
             <form class="agent-form" id="agent-form">
@@ -142,6 +127,6 @@
     </aside>
 
     <div class="toast-stack" id="toast-stack"></div>
-    <script type="module" src="/static/js/app.js?v=prod-d1-ux-3"></script>
+    <script type="module" src="/static/js/app.js?v=prod-d1-ux-5"></script>
   </body>
 </html>

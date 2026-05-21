@@ -6,16 +6,18 @@ const state = {
   dashboard: null,
   selectedAssignmentId: "",
   selectedAssignment: null,
-  queueFilter: "all",
+  selectedProjectId: localStorage.getItem("expert_platform_project") || "",
+  menuCollapsed: localStorage.getItem("expert_platform_menu_collapsed") === "1",
   search: "",
   agentMessages: [
-    { role: "assistant", text: "Готов объяснить задание, проверить пропуски, найти справку или подготовить обращение администратору." },
+    { role: "assistant", text: "Чат готов. Напишите вопрос по выбранному заданию." },
   ],
 };
 
 const els = {
   authScreen: document.getElementById("auth-screen"),
   workspace: document.getElementById("workspace"),
+  menuToggle: document.getElementById("menu-toggle"),
   otpRequestForm: document.getElementById("otp-request-form"),
   otpVerifyForm: document.getElementById("otp-verify-form"),
   otpEmail: document.getElementById("otp-email"),
@@ -25,16 +27,12 @@ const els = {
   profileButton: document.getElementById("profile-button"),
   logoutButton: document.getElementById("logout-button"),
   modeSwitch: document.getElementById("mode-switch"),
-  summaryGrid: document.getElementById("summary-grid"),
-  queueFilters: document.getElementById("queue-filters"),
   assignmentSearch: document.getElementById("assignment-search"),
   assignmentList: document.getElementById("assignment-list"),
   compactProjectList: document.getElementById("compact-project-list"),
   taskCard: document.getElementById("task-card"),
   adminSurface: document.getElementById("admin-surface"),
   refreshButton: document.getElementById("refresh-button"),
-  agentTask: document.getElementById("agent-task"),
-  agentMemory: document.getElementById("agent-memory"),
   agentLog: document.getElementById("agent-log"),
   agentForm: document.getElementById("agent-form"),
   agentInput: document.getElementById("agent-input"),
@@ -85,6 +83,18 @@ function toast(message) {
   node.textContent = message;
   els.toastStack.appendChild(node);
   setTimeout(() => node.remove(), 3200);
+}
+
+function syncMenuState() {
+  els.workspace.classList.toggle("menu-collapsed", state.menuCollapsed);
+  els.menuToggle?.setAttribute("aria-expanded", String(!state.menuCollapsed));
+  els.menuToggle?.setAttribute("aria-label", state.menuCollapsed ? "Развернуть меню" : "Свернуть меню");
+  localStorage.setItem("expert_platform_menu_collapsed", state.menuCollapsed ? "1" : "0");
+}
+
+function toggleMenu() {
+  state.menuCollapsed = !state.menuCollapsed;
+  syncMenuState();
 }
 
 async function api(path, options = {}) {
@@ -146,6 +156,7 @@ function renderChrome() {
   els.profileButton.classList.remove("hidden");
   els.logoutButton.classList.remove("hidden");
   els.modeSwitch.classList.remove("hidden");
+  syncMenuState();
   const mode = state.session?.mode || "expert";
   els.modeSwitch.querySelectorAll("button").forEach((button) => {
     button.classList.toggle("active", button.dataset.mode === mode);
@@ -158,38 +169,42 @@ function statusChip(status) {
 
 function renderDashboard() {
   const dashboard = state.dashboard || { assignments: [], projects: [], summary: {} };
-  const summary = dashboard.summary || {};
-  const metricRows = [
-    ["assigned", "Назначено"],
-    ["draft_saved", "Черновики"],
-    ["submitted", "Отправлено"],
-    ["approved", "Принято"],
-  ];
-  els.summaryGrid.innerHTML = metricRows.map(([key, label]) => `
-    <div class="metric-card"><strong>${escapeHtml(summary[key] || 0)}</strong><span>${escapeHtml(label)}</span></div>
-  `).join("");
-
-  els.compactProjectList.innerHTML = (dashboard.projects || []).map((project) => {
+  const projects = dashboard.projects || [];
+  const assignments = dashboard.assignments || [];
+  const totalAssignments = assignments.length;
+  const projectButtons = projects.map((project) => {
     const membership = project.membership_status || project.access || "available";
     const isActive = membership === "active";
     const isRequested = membership === "requested";
-    const actionLabel = isActive ? "Подключено" : isRequested ? "Запрошено" : "Подключиться";
+    const isLocked = membership === "locked";
+    const count = assignments.filter((assignment) => assignment.project_id === project.id).length;
+    const actionLabel = isActive ? "доступ" : isRequested ? "запрошено" : isLocked ? "закрыто" : "подключить";
     return `
-      <article class="project-access-card">
-        <div>
-          <strong>${escapeHtml(project.name)}</strong>
-          <span>${escapeHtml(labels[project.task_type] || project.task_type)} · ${escapeHtml(project.required_area || "область не задана")}</span>
-        </div>
-        <button class="secondary-button" type="button" data-join-project="${escapeHtml(project.id)}" ${isActive || isRequested ? "disabled" : ""}>${escapeHtml(actionLabel)}</button>
+      <article class="project-menu-item">
+        <button class="project-menu-button ${project.id === state.selectedProjectId ? "active" : ""}" type="button" data-project-filter="${escapeHtml(project.id)}">
+          <span>
+            <strong>${escapeHtml(project.name)}</strong>
+            <small>${escapeHtml(labels[project.task_type] || project.task_type)} · ${escapeHtml(project.required_area || "область не задана")}</small>
+          </span>
+          <em>${escapeHtml(count)}</em>
+        </button>
+        <button class="project-access-action" type="button" data-join-project="${escapeHtml(project.id)}" ${isActive || isRequested || isLocked ? "disabled" : ""}>${escapeHtml(actionLabel)}</button>
       </article>
     `;
-  }).join("") || `<div class="empty-inline">Проекты не найдены.</div>`;
+  }).join("");
+  els.compactProjectList.innerHTML = `
+    <button class="project-menu-button all-projects ${state.selectedProjectId ? "" : "active"}" type="button" data-project-filter="">
+      <span><strong>Все проекты</strong><small>Полная рабочая очередь</small></span>
+      <em>${escapeHtml(totalAssignments)}</em>
+    </button>
+    ${projectButtons || `<div class="empty-inline">Проекты не найдены.</div>`}
+  `;
 
   const query = state.search.toLowerCase();
-  const items = (dashboard.assignments || []).filter((item) => {
-    const byFilter = state.queueFilter === "all" || item.status === state.queueFilter;
+  const items = assignments.filter((item) => {
+    const byProject = !state.selectedProjectId || item.project_id === state.selectedProjectId;
     const haystack = `${item.task_title} ${item.project_name} ${item.task_type} ${item.status}`.toLowerCase();
-    return byFilter && (!query || haystack.includes(query));
+    return byProject && (!query || haystack.includes(query));
   });
   els.assignmentList.innerHTML = items.map((item) => `
     <button class="assignment-card ${item.id === state.selectedAssignmentId ? "active" : ""}" type="button" data-assignment-id="${escapeHtml(item.id)}">
@@ -206,6 +221,13 @@ function renderDashboard() {
 
   els.assignmentList.querySelectorAll("[data-assignment-id]").forEach((button) => {
     button.addEventListener("click", () => selectAssignment(button.dataset.assignmentId));
+  });
+  els.compactProjectList.querySelectorAll("[data-project-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedProjectId = button.dataset.projectFilter || "";
+      localStorage.setItem("expert_platform_project", state.selectedProjectId);
+      renderDashboard();
+    });
   });
   els.compactProjectList.querySelectorAll("[data-join-project]").forEach((button) => {
     button.addEventListener("click", () => joinProject(button.dataset.joinProject));
@@ -258,8 +280,7 @@ function stepper() {
 function renderTask(detail) {
   const { assignment, project, task } = detail;
   const payload = task.payload || {};
-  els.agentTask.textContent = assignment.task_title;
-  els.agentMemory.textContent = "D1 thread";
+  const reviewMode = state.session?.mode === "reviewer" || state.session?.role === "reviewer";
   els.taskCard.innerHTML = `
     <div class="task-head">
       <div class="task-title">
@@ -272,31 +293,13 @@ function renderTask(detail) {
           <span class="chip">готовность ${escapeHtml(assignment.completion?.percent || 0)}%</span>
         </div>
       </div>
-      <button class="secondary-button" type="button" data-action="claim">Взять</button>
     </div>
-    ${stepper()}
-    <div class="content-grid">
-      <section class="source-box">
-        <span class="eyebrow">Материалы</span>
-        <h3>${escapeHtml(payload.headline || assignment.task_title)}</h3>
-        <p>${escapeHtml(payload.source_text || payload.text || payload.question || payload.anchor || "")}</p>
-        ${payload.model_answer ? `<h3>Ответ</h3><p>${escapeHtml(payload.model_answer)}</p>` : ""}
-      </section>
-      <section class="editor-box">
-        <span class="eyebrow">Форма</span>
-        ${renderEditor(assignment.task_type, payload, assignment.draft || {})}
-      </section>
-    </div>
-    <div class="task-actions">
-      <button class="secondary-button" type="button" data-action="draft">Сохранить черновик</button>
-      <button class="primary-button" type="button" data-action="submit">Отправить</button>
-      <button class="secondary-button ${state.session?.role === "admin" || state.session?.role === "reviewer" ? "" : "hidden"}" type="button" data-action="review-approve">Принять</button>
-      <button class="secondary-button ${state.session?.role === "admin" || state.session?.role === "reviewer" ? "" : "hidden"}" type="button" data-action="review-rework">Вернуть</button>
-    </div>
+    ${reviewMode ? renderReviewWorkspace(detail) : renderExpertWorkspace(detail)}
     <section class="history-box">
       <span class="eyebrow">История</span>
       ${renderHistory(detail.history)}
     </section>
+    ${renderAssignmentChat(detail)}
   `;
   els.taskCard.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", () => handleTaskAction(button.dataset.action));
@@ -310,6 +313,136 @@ function renderTask(detail) {
       if (input) input.value = button.dataset.choice;
     });
   });
+  const chatForm = els.taskCard.querySelector("#assignment-comment-form");
+  chatForm?.addEventListener("submit", (event) => addAssignmentComment(event).catch((error) => toast(error.message)));
+  const chatLog = els.taskCard.querySelector(".assignment-chat-log");
+  if (chatLog) chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function renderMaterialBox(assignment, payload) {
+  return `
+    <section class="source-box">
+      <span class="eyebrow">Материалы</span>
+      <h3>${escapeHtml(payload.headline || assignment.task_title)}</h3>
+      <p>${escapeHtml(payload.source_text || payload.text || payload.question || payload.anchor || "")}</p>
+      ${payload.model_answer ? `<h3>Исходный ответ</h3><p>${escapeHtml(payload.model_answer)}</p>` : ""}
+      ${payload.option_a ? `<h3>Вариант A</h3><p>${escapeHtml(payload.option_a)}</p>` : ""}
+      ${payload.option_b ? `<h3>Вариант B</h3><p>${escapeHtml(payload.option_b)}</p>` : ""}
+      ${payload.reference ? `<h3>Эталон</h3><p>${escapeHtml(payload.reference)}</p>` : ""}
+      ${payload.positive ? `<h3>Текст 1</h3><p>${escapeHtml(payload.positive)}</p>` : ""}
+      ${payload.negative ? `<h3>Текст 2</h3><p>${escapeHtml(payload.negative)}</p>` : ""}
+    </section>
+  `;
+}
+
+function renderExpertWorkspace(detail) {
+  const { assignment, task } = detail;
+  const payload = task.payload || {};
+  return `
+    <div class="content-grid">
+      ${renderMaterialBox(assignment, payload)}
+      <section class="editor-box">
+        <span class="eyebrow">Работа эксперта</span>
+        ${renderEditor(assignment.task_type, payload, assignment.draft || {})}
+      </section>
+    </div>
+    <div class="task-actions">
+      <button class="secondary-button" type="button" data-action="draft">Сохранить</button>
+      <button class="primary-button" type="button" data-action="submit">Отправить экспертизу</button>
+    </div>
+  `;
+}
+
+function renderReviewWorkspace(detail) {
+  const { assignment, task } = detail;
+  const payload = task.payload || {};
+  return `
+    <div class="review-grid">
+      ${renderMaterialBox(assignment, payload)}
+      <section class="expert-result-box">
+        <span class="eyebrow">Что отметил эксперт</span>
+        ${renderSubmittedAnswer(assignment.task_type, payload, assignment.submitted_payload || assignment.draft || {})}
+      </section>
+    </div>
+    <form class="review-form" id="task-form">
+      <label>Причина отклонения<textarea name="reviewer_note" rows="4" placeholder="Обязательно, если результат эксперта отклоняется."></textarea></label>
+      <div class="task-actions">
+        <button class="primary-button" type="button" data-action="review-approve">Принять</button>
+        <button class="danger-button" type="button" data-action="review-reject">Отклонить</button>
+      </div>
+    </form>
+  `;
+}
+
+function valueRow(label, value) {
+  return `<div class="answer-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "не заполнено")}</strong></div>`;
+}
+
+function renderSubmittedAnswer(type, payload, answer) {
+  if (!answer || !Object.keys(answer).length) {
+    return `<div class="empty-inline">Эксперт еще не отправил результат.</div>`;
+  }
+  if (type === "classification") {
+    const option = (payload.options || []).find((item) => item.id === answer.classification_choice);
+    return `
+      <div class="answer-stack">
+        ${valueRow("Выбор", option?.title || answer.classification_choice)}
+        ${valueRow("Уверенность", answer.confidence)}
+        ${valueRow("Аргументы", answer.rationale)}
+      </div>
+    `;
+  }
+  if (type === "rubric_scorecard") {
+    const scores = (payload.criteria || []).map((criterion) => valueRow(criterion.label, answer[`score_${criterion.id}`])).join("");
+    return `
+      <div class="answer-stack">
+        ${scores}
+        ${valueRow("Доказательства", answer.evidence)}
+        ${valueRow("Итог", answer.rationale)}
+      </div>
+    `;
+  }
+  if (type === "pairwise_preference") {
+    const variants = { a: "Вариант A", b: "Вариант B", tie: "Ничья" };
+    return `
+      <div class="answer-stack">
+        ${valueRow("Выбор", variants[answer.preference] || answer.preference)}
+        ${valueRow("Уверенность", answer.confidence)}
+        ${valueRow("Аргументы", answer.rationale)}
+      </div>
+    `;
+  }
+  const variants = { positive: "Текст 1", negative: "Текст 2" };
+  return `
+    <div class="answer-stack">
+      ${valueRow("Ближе к эталону", variants[answer.closest] || answer.closest)}
+      ${valueRow("Уверенность", answer.confidence)}
+      ${valueRow("Комментарий", answer.rationale)}
+    </div>
+  `;
+}
+
+function renderAssignmentChat(detail) {
+  const comments = detail.comments || [];
+  return `
+    <section class="assignment-chat">
+      <div class="assignment-chat-head">
+        <div><span class="eyebrow">Чат по заданию</span><h3>Быстрое уточнение</h3></div>
+      </div>
+      <div class="assignment-chat-log">
+        ${comments.map((item) => `
+          <div class="assignment-comment">
+            <div><strong>${escapeHtml(item.display_name || "Участник")}</strong><time>${escapeHtml(formatDate(item.created_at))}</time></div>
+            <p>${escapeHtml(item.body)}</p>
+          </div>
+        `).join("") || `<div class="empty-inline">Сообщений пока нет.</div>`}
+      </div>
+      <form class="assignment-comment-form" id="assignment-comment-form">
+        <textarea name="message" rows="2" placeholder="Сообщение эксперту или ревьюверу"></textarea>
+        <button class="secondary-button" type="submit">Отправить</button>
+      </form>
+    </section>
+  `;
 }
 
 function renderEditor(type, payload, draft) {
@@ -415,11 +548,15 @@ async function handleTaskAction(action) {
   let body = { payload };
   if (action === "review-approve") {
     route = "review";
-    body = { outcome: "approved", payload: { reviewer_note: payload.rationale || "Проверка принята." } };
+    body = { outcome: "approved", payload: { reviewer_note: payload.reviewer_note || "Проверка принята." } };
   }
-  if (action === "review-rework") {
+  if (action === "review-reject") {
+    if (!String(payload.reviewer_note || "").trim()) {
+      toast("Укажите причину отклонения.");
+      return;
+    }
     route = "review";
-    body = { outcome: "needs_rework", payload: { reviewer_note: payload.rationale || "Нужна доработка." } };
+    body = { outcome: "needs_rework", payload: { reviewer_note: payload.reviewer_note.trim() } };
   }
   setSync("сохранение");
   const detail = await api(`/api/assignments/${encodeURIComponent(state.selectedAssignmentId)}/${route}`, {
@@ -430,6 +567,20 @@ async function handleTaskAction(action) {
   renderTask(detail);
   await loadDashboard(state.selectedAssignmentId);
   toast("Готово");
+}
+
+async function addAssignmentComment(event) {
+  event.preventDefault();
+  if (!state.selectedAssignmentId) return;
+  const form = event.currentTarget;
+  const message = String(new FormData(form).get("message") || "").trim();
+  if (!message) return;
+  const detail = await api(`/api/assignments/${encodeURIComponent(state.selectedAssignmentId)}/comment`, {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+  state.selectedAssignment = detail;
+  renderTask(detail);
 }
 
 async function joinProject(projectId) {
@@ -454,7 +605,6 @@ async function askAgent(message) {
     body: JSON.stringify({ message, assignment_id: state.selectedAssignmentId }),
   });
   state.agentMessages.push({ role: "assistant", text: response.message });
-  if (response.memory) els.agentMemory.textContent = `${response.memory.length} сообщений`;
   renderAgentLog();
 }
 
@@ -593,17 +743,11 @@ els.assignmentSearch.addEventListener("input", () => {
   state.search = els.assignmentSearch.value;
   renderDashboard();
 });
-els.queueFilters.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-filter]");
-  if (!button) return;
-  state.queueFilter = button.dataset.filter;
-  els.queueFilters.querySelectorAll("button").forEach((node) => node.classList.toggle("active", node === button));
-  renderDashboard();
-});
 els.modeSwitch.addEventListener("click", (event) => {
   const button = event.target.closest("[data-mode]");
   if (button) switchMode(button.dataset.mode).catch((error) => toast(error.message));
 });
+els.menuToggle?.addEventListener("click", toggleMenu);
 els.profileButton.addEventListener("click", () => openDrawer().catch((error) => toast(error.message)));
 els.drawerClose.addEventListener("click", closeDrawer);
 els.drawerBackdrop.addEventListener("click", closeDrawer);
@@ -619,8 +763,4 @@ els.agentForm.addEventListener("submit", async (event) => {
   els.agentInput.value = "";
   await askAgent(message).catch((error) => toast(error.message));
 });
-document.querySelectorAll("[data-agent-prompt]").forEach((button) => {
-  button.addEventListener("click", () => askAgent(button.dataset.agentPrompt).catch((error) => toast(error.message)));
-});
-
 boot();
