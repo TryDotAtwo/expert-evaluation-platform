@@ -459,6 +459,54 @@ button.project-pill:hover,
   background: #ffffff;
 }
 
+button.project-pill,
+.assignment-card {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+button.project-pill {
+  flex-basis: clamp(220px, 26vw, 280px);
+  padding: 10px;
+}
+
+.assignment-card {
+  padding: 10px;
+}
+
+.assignment-card.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+button.project-pill > strong,
+.assignment-card > strong {
+  display: block;
+  font-size: 14px;
+  line-height: 1.25;
+  font-weight: 760;
+}
+
+button.project-pill > span,
+.assignment-card > span:not(.status-chip) {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.assignment-card > .status-chip {
+  justify-self: start;
+}
+
 .project-pill h4,
 .assignments .stack-item h4,
 .stack-item h5 {
