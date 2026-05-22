@@ -951,10 +951,77 @@ legend {
   padding: 14px;
 }
 
+.admin-header {
+  position: sticky;
+  top: -14px;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: minmax(180px, auto) minmax(0, 1fr);
+  align-items: end;
+  gap: 14px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.96);
+  padding: 4px 0 12px;
+  backdrop-filter: blur(12px);
+}
+
+.admin-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.admin-tabs button,
+.admin-choice {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 820;
+  padding: 8px 10px;
+}
+
+.admin-tabs button.active,
+.admin-choice.selected {
+  border-color: var(--primary);
+  background: #ecfdf5;
+  color: var(--primary-dark);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.08);
+}
+
+.admin-content {
+  display: grid;
+  gap: 14px;
+}
+
 .admin-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.admin-item strong {
+  display: block;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.admin-item p {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.admin-two-column {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.admin-two-column.wide-left {
+  grid-template-columns: 1fr;
 }
 
 .admin-section {
@@ -971,26 +1038,42 @@ legend {
 }
 
 .application-list,
-.export-list {
+.export-list,
+.admin-list,
+.expert-grid,
+.project-admin-grid {
   display: grid;
   gap: 10px;
 }
 
 .application-card,
-.export-row {
+.export-row,
+.expert-profile-card,
+.admin-select-card,
+.admin-assignment-row,
+.admin-detail-panel,
+.admin-form-panel {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-soft);
   padding: 12px;
 }
 
-.application-card {
+.application-card,
+.expert-profile-card,
+.admin-select-card,
+.admin-assignment-row,
+.admin-detail-panel,
+.admin-form-panel {
   display: grid;
   gap: 10px;
 }
 
 .application-card header,
-.export-row {
+.export-row,
+.expert-profile-card header,
+.admin-select-card header,
+.admin-assignment-row {
   display: flex;
   align-items: start;
   justify-content: space-between;
@@ -998,13 +1081,18 @@ legend {
 }
 
 .application-card header strong,
-.export-row strong {
+.export-row strong,
+.expert-profile-card strong,
+.admin-select-card strong,
+.admin-assignment-row strong {
   display: block;
   font-size: 14px;
 }
 
 .application-card header small,
-.export-row small {
+.export-row small,
+.expert-profile-card small,
+.admin-assignment-row small {
   display: block;
   color: var(--muted);
   font-size: 12px;
@@ -1017,11 +1105,91 @@ legend {
   gap: 6px;
 }
 
+.application-list.compact .application-decision {
+  grid-template-columns: 1fr;
+}
+
+.expert-profile-card,
+.admin-select-card,
+.admin-assignment-row {
+  cursor: pointer;
+}
+
+.expert-profile-card.active,
+.admin-select-card.active,
+.admin-assignment-row.active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.1);
+}
+
+.admin-select-card p {
+  margin-bottom: 0;
+}
+
+.detail-table {
+  display: grid;
+  gap: 8px;
+}
+
+.detail-table div,
+.admin-note-row {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 9px;
+}
+
+.detail-table span,
+.admin-note-row span,
+.form-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.detail-table strong,
+.admin-note-row strong {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.admin-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-form-panel {
+  background: var(--surface);
+}
+
+.admin-choice-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 7px;
+}
+
 .application-decision {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: end;
+}
+
+@media (min-width: 1680px) {
+  .admin-two-column {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 0.72fr);
+  }
+
+  .admin-two-column.wide-left {
+    grid-template-columns: minmax(0, 1.15fr) minmax(300px, 0.72fr);
+  }
 }
 
 .empty-state {
@@ -1117,8 +1285,15 @@ legend {
   .content-grid,
   .review-grid,
   .stepper,
-  .admin-grid {
+  .admin-grid,
+  .admin-two-column,
+  .admin-two-column.wide-left,
+  .admin-header {
     grid-template-columns: 1fr;
+  }
+
+  .admin-tabs {
+    justify-content: flex-start;
   }
 
   .assignment-comment-form {

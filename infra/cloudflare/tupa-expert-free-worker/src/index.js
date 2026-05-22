@@ -79,6 +79,15 @@ function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeId(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
 function adminEmails(env) {
   return new Set(String(env.ADMIN_EMAILS || "").split(",").map(normalizeEmail).filter(Boolean));
 }
@@ -260,6 +269,24 @@ function taskPayloadFor(type) {
   };
 }
 
+function payloadForAdminAssignment(type, body = {}, fallbackTitle = "") {
+  const base = taskPayloadFor(type);
+  const title = String(body.task_title || fallbackTitle || base.headline || "").trim().slice(0, 180);
+  const primaryText = String(body.source_text || body.material || "").trim().slice(0, 12000);
+  const payload = { ...base, headline: title || base.headline };
+  if (primaryText) {
+    if (type === "pairwise_preference") payload.question = primaryText;
+    else if (type === "triplet_similarity") payload.anchor = primaryText;
+    else payload.source_text = primaryText;
+  }
+  if (body.model_answer) payload.model_answer = String(body.model_answer).trim().slice(0, 12000);
+  if (body.option_a) payload.option_a = String(body.option_a).trim().slice(0, 12000);
+  if (body.option_b) payload.option_b = String(body.option_b).trim().slice(0, 12000);
+  if (body.positive) payload.positive = String(body.positive).trim().slice(0, 12000);
+  if (body.negative) payload.negative = String(body.negative).trim().slice(0, 12000);
+  return payload;
+}
+
 function dueForIndex(index) {
   const date = new Date();
   date.setDate(date.getDate() + index);
@@ -418,6 +445,19 @@ function publicUser(user, profile) {
     wants_reviewer: Boolean(profile?.wants_reviewer),
     coauthor_consent: Boolean(profile?.coauthor_consent),
   };
+}
+
+async function listExpertProfiles(env) {
+  const rows = (await env.EXPERT_DB.prepare(
+    "SELECT u.id, u.email, u.display_name, u.role, u.status, u.auth_provider, u.created_at, u.updated_at, p.legal_areas_json, p.wants_reviewer, p.mode, p.coauthor_consent, p.admin_credentials_text FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.role IN ('expert', 'reviewer', 'admin') ORDER BY CASE u.role WHEN 'admin' THEN 0 WHEN 'reviewer' THEN 1 ELSE 2 END, u.created_at DESC LIMIT 300"
+  ).all()).results || [];
+  return rows.map((row) => ({
+    ...row,
+    legal_areas: safeJsonParse(row.legal_areas_json, []),
+    wants_reviewer: Boolean(row.wants_reviewer),
+    coauthor_consent: Boolean(row.coauthor_consent),
+    admin_credentials: row.admin_credentials_text || "",
+  }));
 }
 
 async function sendEmail(env, { to, subject, text, html }) {
@@ -708,6 +748,7 @@ async function dashboard(env, account) {
   const applications = account.user.role === "admin"
     ? (await env.EXPERT_DB.prepare("SELECT id, email, display_name, contact, legal_areas_json, wants_reviewer, coauthor_consent, status, admin_note, admin_credentials_text, decided_by, decided_at, created_at, updated_at FROM registration_applications ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at DESC LIMIT 100").all()).results || []
     : [];
+  const experts = account.user.role === "admin" ? await listExpertProfiles(env) : [];
   return json({
     user: publicUser(account.user, profile),
     role: account.user.role,
@@ -725,6 +766,7 @@ async function dashboard(env, account) {
         coauthor_consent: Boolean(application.coauthor_consent),
       })),
       routing: projects.map((project) => ({ project_id: project.id, required_area: project.required_area, status: project.status })),
+      experts,
       quality: { submitted: summary.submitted || 0, approved: summary.approved || 0, needs_rework: summary.needs_rework || 0 },
       import_export: { imports: [], exports: projects.map((project) => ({ project_id: project.id, name: project.name })) },
     } : null,
@@ -1024,6 +1066,84 @@ async function exportProjectResults(request, env, account) {
   });
 }
 
+async function createAdminProject(request, env, account) {
+  if (!requireAdmin(account)) return error(403, "Доступно только администратору.");
+  const body = await readJson(request);
+  const name = String(body.name || "").trim().slice(0, 180);
+  const summary = String(body.summary || "").trim().slice(0, 1200);
+  const requiredArea = LEGAL_AREAS.includes(body.required_area) ? body.required_area : "";
+  const taskType = ["classification", "rubric_scorecard", "pairwise_preference", "triplet_similarity"].includes(body.task_type)
+    ? body.task_type
+    : "classification";
+  const explicitId = normalizeId(body.id);
+  const id = explicitId || `project-${randomHex(6)}`;
+  if (!name) return error(400, "Укажите название проекта.");
+  if (!summary) return error(400, "Укажите описание проекта.");
+  const existing = await env.EXPERT_DB.prepare("SELECT id FROM projects WHERE id = ?").bind(id).first();
+  if (existing) return error(409, "Проект с таким ID уже существует.");
+  const createdAt = nowIso();
+  await env.EXPERT_DB.prepare(
+    "INSERT INTO projects (id, name, summary, required_area, task_type, status, accent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(id, name, summary, requiredArea || null, taskType, "active", body.accent || "teal", createdAt).run();
+  await audit(env, account.user.id, "admin.project_created", "project", id, { name, required_area: requiredArea, task_type: taskType });
+  return json({ project: { id, name, summary, required_area: requiredArea, task_type: taskType, status: "active", created_at: createdAt } }, 201);
+}
+
+async function createAdminAssignment(request, env, account) {
+  if (!requireAdmin(account)) return error(403, "Доступно только администратору.");
+  const body = await readJson(request);
+  const projectId = String(body.project_id || "").trim();
+  const userId = String(body.user_id || "").trim();
+  const title = String(body.task_title || "").trim().slice(0, 180);
+  if (!projectId) return error(400, "Выберите проект.");
+  if (!userId) return error(400, "Выберите эксперта или ревьювера.");
+  if (!title) return error(400, "Укажите название задания.");
+  const [project, user] = await Promise.all([
+    env.EXPERT_DB.prepare("SELECT * FROM projects WHERE id = ?").bind(projectId).first(),
+    env.EXPERT_DB.prepare("SELECT * FROM users WHERE id = ? AND status = 'active'").bind(userId).first(),
+  ]);
+  if (!project) return error(404, "Проект не найден.");
+  if (!user) return error(404, "Пользователь не найден.");
+  if (!["expert", "reviewer", "admin"].includes(user.role)) return error(400, "Задание можно назначить только участнику платформы.");
+  const taskType = ["classification", "rubric_scorecard", "pairwise_preference", "triplet_similarity"].includes(body.task_type)
+    ? body.task_type
+    : project.task_type;
+  const payload = payloadForAdminAssignment(taskType, body, title);
+  const createdAt = nowIso();
+  let dueAt = dueForIndex(3);
+  if (body.due_at) {
+    const parsedDue = new Date(body.due_at);
+    if (Number.isNaN(parsedDue.getTime())) return error(400, "Некорректный срок задания.");
+    dueAt = parsedDue.toISOString();
+  }
+  const id = `assignment-${randomHex(10)}`;
+  await env.EXPERT_DB.batch([
+    env.EXPERT_DB.prepare(
+      "INSERT OR IGNORE INTO project_memberships (user_id, project_id, status, created_at) VALUES (?, ?, ?, ?)"
+    ).bind(user.id, project.id, "active", createdAt),
+    env.EXPERT_DB.prepare(
+      "INSERT INTO assignments (id, user_id, project_id, task_type, task_title, status, stored_status, revision, due_at, priority, payload_json, draft_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(
+      id,
+      user.id,
+      project.id,
+      taskType,
+      title,
+      "assigned",
+      "queued",
+      0,
+      dueAt,
+      body.priority === "high" ? "high" : "normal",
+      JSON.stringify(payload),
+      "{}",
+      createdAt,
+      createdAt
+    ),
+  ]);
+  await audit(env, account.user.id, "admin.assignment_created", "assignment", id, { project_id: project.id, user_id: user.id, task_type: taskType });
+  return json({ assignment: assignmentCard(await env.EXPERT_DB.prepare("SELECT * FROM assignments WHERE id = ?").bind(id).first(), project) }, 201);
+}
+
 function detectAgentIntent(message) {
   const text = String(message || "").toLowerCase();
   if (/админ|администратор|поддержк|связ/.test(text)) return "admin";
@@ -1258,6 +1378,12 @@ async function handleApi(request, env) {
     if (!requireAdmin(account)) return error(403, "Доступно только администратору.");
     return json({ applications: await listApplications(env) });
   }
+  if (path === "/api/admin/experts" && request.method === "GET") {
+    if (!requireAdmin(account)) return error(403, "Доступно только администратору.");
+    return json({ experts: await listExpertProfiles(env) });
+  }
+  if (path === "/api/admin/projects" && request.method === "POST") return createAdminProject(request, env, account);
+  if (path === "/api/admin/assignments" && request.method === "POST") return createAdminAssignment(request, env, account);
   const applicationDecisionMatch = path.match(/^\/api\/admin\/applications\/([^/]+)\/decision$/);
   if (applicationDecisionMatch && request.method === "POST") return decideApplication(request, env, account, applicationDecisionMatch[1]);
   if (path === "/api/admin/export" && request.method === "GET") return exportProjectResults(request, env, account);

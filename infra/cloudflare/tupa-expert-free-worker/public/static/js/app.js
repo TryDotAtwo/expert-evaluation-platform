@@ -7,6 +7,10 @@ const state = {
   selectedAssignmentId: "",
   selectedAssignment: null,
   selectedProjectId: localStorage.getItem("expert_platform_project") || "",
+  selectedAdminProjectId: localStorage.getItem("expert_platform_admin_project") || "",
+  selectedAdminAssignmentId: localStorage.getItem("expert_platform_admin_assignment") || "",
+  selectedAdminUserId: localStorage.getItem("expert_platform_admin_user") || "",
+  adminActiveTab: localStorage.getItem("expert_platform_admin_tab") || "summary",
   menuCollapsed: localStorage.getItem("expert_platform_menu_collapsed") === "1",
   search: "",
   agentMessages: [
@@ -259,7 +263,7 @@ function renderDashboard() {
   renderAdminSurface();
 }
 
-function renderAdminSurface() {
+function renderAdminSurfaceLegacy() {
   const admin = state.dashboard?.admin_surface;
   if (!admin) {
     els.adminSurface.classList.add("hidden");
@@ -326,6 +330,365 @@ function renderAdminSurface() {
   });
 }
 
+const adminTabs = [
+  ["summary", "Сводка"],
+  ["applications", "Заявки"],
+  ["experts", "Эксперты"],
+  ["projects", "Проекты"],
+  ["assignments", "Задания"],
+  ["create", "Создать"],
+  ["export", "Экспорт"],
+];
+
+const taskTypeOptions = [
+  ["classification", "Классификация"],
+  ["rubric_scorecard", "Рубрика"],
+  ["pairwise_preference", "Сравнение"],
+  ["triplet_similarity", "Близость"],
+];
+
+const roleLabels = { admin: "админ", expert: "эксперт", reviewer: "ревьювер" };
+
+function displayDate(value) {
+  return value ? new Date(value).toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "-";
+}
+
+function adminContext(admin) {
+  const projects = state.dashboard?.projects || [];
+  const assignments = state.dashboard?.assignments || [];
+  const experts = admin.experts || [];
+  const applications = admin.applications || [];
+  const exports = admin.import_export?.exports || [];
+  if (!state.selectedAdminProjectId && projects[0]) state.selectedAdminProjectId = projects[0].id;
+  if (!state.selectedAdminAssignmentId && assignments[0]) state.selectedAdminAssignmentId = assignments[0].id;
+  if (!state.selectedAdminUserId && experts[0]) state.selectedAdminUserId = experts[0].id;
+  const selectedProject = projects.find((item) => item.id === state.selectedAdminProjectId) || projects[0] || null;
+  const selectedAssignment = assignments.find((item) => item.id === state.selectedAdminAssignmentId) || assignments[0] || null;
+  const selectedUser = experts.find((item) => item.id === state.selectedAdminUserId) || experts[0] || null;
+  if (selectedProject) state.selectedAdminProjectId = selectedProject.id;
+  if (selectedAssignment) state.selectedAdminAssignmentId = selectedAssignment.id;
+  if (selectedUser) state.selectedAdminUserId = selectedUser.id;
+  return { projects, assignments, experts, applications, exports, selectedProject, selectedAssignment, selectedUser };
+}
+
+function metricCard(label, value, note = "") {
+  return `<div class="admin-item"><strong>${escapeHtml(value)}</strong><p>${escapeHtml(label)}${note ? ` · ${escapeHtml(note)}` : ""}</p></div>`;
+}
+
+function adminTabNav() {
+  return `
+    <nav class="admin-tabs" aria-label="Администрирование">
+      ${adminTabs.map(([id, label]) => `
+        <button class="${state.adminActiveTab === id ? "active" : ""}" type="button" data-admin-tab="${escapeHtml(id)}">${escapeHtml(label)}</button>
+      `).join("")}
+    </nav>
+  `;
+}
+
+function adminPills(items = []) {
+  return items.length ? items.map((item) => `<span class="chip">${escapeHtml(item)}</span>`).join("") : `<span class="chip">не задано</span>`;
+}
+
+function renderAdminSummary(admin, ctx) {
+  const pendingCount = ctx.applications.filter((item) => item.status === "pending").length;
+  const reviewerCount = ctx.experts.filter((item) => item.role === "reviewer" || item.wants_reviewer).length;
+  const submitted = admin.quality?.submitted || 0;
+  const approved = admin.quality?.approved || 0;
+  return `
+    <section class="admin-section">
+      <div class="admin-grid">
+        ${metricCard("заявки ждут решения", pendingCount)}
+        ${metricCard("профили в системе", ctx.experts.length, `${reviewerCount} ревью`)}
+        ${metricCard("активные проекты", ctx.projects.length)}
+        ${metricCard("экспертизы", submitted, `${approved} принято`)}
+      </div>
+    </section>
+    <section class="admin-section admin-two-column">
+      <div>
+        <div class="admin-section-head"><div><span class="eyebrow">Фокус</span><h3>Ближайшие решения</h3></div></div>
+        <div class="application-list compact">
+          ${ctx.applications.slice(0, 4).map(renderApplicationCard).join("") || `<div class="empty-inline">Заявок нет.</div>`}
+        </div>
+      </div>
+      <div>
+        <div class="admin-section-head"><div><span class="eyebrow">Работа</span><h3>Последние задания</h3></div></div>
+        <div class="admin-list">
+          ${ctx.assignments.slice(0, 6).map(renderAdminAssignmentRow).join("") || `<div class="empty-inline">Заданий нет.</div>`}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderApplicationCard(application) {
+  const decided = application.status !== "pending";
+  return `
+    <article class="application-card" data-application-id="${escapeHtml(application.id)}">
+      <header>
+        <div>
+          <strong>${escapeHtml(application.display_name)}</strong>
+          <small>${escapeHtml(application.email)} · ${escapeHtml(application.contact)}</small>
+        </div>
+        ${statusChip(application.status)}
+      </header>
+      <div class="application-meta">
+        ${adminPills(application.legal_areas || [])}
+        ${application.wants_reviewer ? `<span class="chip">хочет ревью</span>` : ""}
+        ${application.coauthor_consent ? `<span class="chip">можно упоминать</span>` : ""}
+      </div>
+      ${decided ? `
+        <div class="admin-note-row">
+          <span>решено ${escapeHtml(displayDate(application.decided_at))}</span>
+          <strong>${escapeHtml(application.admin_note || "без комментария")}</strong>
+        </div>
+      ` : `
+        <div class="application-decision">
+          <label>Комментарий<textarea name="admin_note" rows="2" placeholder="виден в письме"></textarea></label>
+          <label>Регалии<textarea name="admin_credentials" rows="2" placeholder="заполнит админ при необходимости"></textarea></label>
+          <button class="primary-button" type="button" data-application-decision="approved">Принять</button>
+          <button class="danger-button" type="button" data-application-decision="rejected">Отклонить</button>
+        </div>
+      `}
+    </article>
+  `;
+}
+
+function renderAdminApplications(ctx) {
+  const pending = ctx.applications.filter((item) => item.status === "pending");
+  const processed = ctx.applications.filter((item) => item.status !== "pending");
+  return `
+    <section class="admin-section">
+      <div class="admin-section-head"><div><span class="eyebrow">Разбор заявок</span><h3>Новые кандидаты</h3></div></div>
+      <div class="application-list">${pending.map(renderApplicationCard).join("") || `<div class="empty-inline">Новых заявок нет.</div>`}</div>
+    </section>
+    <section class="admin-section">
+      <div class="admin-section-head"><div><span class="eyebrow">История</span><h3>Обработанные заявки</h3></div></div>
+      <div class="application-list compact">${processed.map(renderApplicationCard).join("") || `<div class="empty-inline">История пуста.</div>`}</div>
+    </section>
+  `;
+}
+
+function renderExpertProfileCard(expert) {
+  return `
+    <article class="expert-profile-card ${expert.id === state.selectedAdminUserId ? "active" : ""}" data-admin-user="${escapeHtml(expert.id)}">
+      <header>
+        <div><strong>${escapeHtml(expert.display_name)}</strong><small>${escapeHtml(expert.email)}</small></div>
+        <span class="chip">${escapeHtml(roleLabels[expert.role] || expert.role)}</span>
+      </header>
+      <div class="application-meta">
+        ${adminPills(expert.legal_areas || [])}
+        ${expert.coauthor_consent ? `<span class="chip">соавторство ок</span>` : ""}
+        ${expert.wants_reviewer ? `<span class="chip">ревью ок</span>` : ""}
+      </div>
+    </article>
+  `;
+}
+
+function renderAdminExperts(ctx) {
+  const selected = ctx.selectedUser;
+  return `
+    <section class="admin-section admin-two-column wide-left">
+      <div>
+        <div class="admin-section-head"><div><span class="eyebrow">Профили экспертов</span><h3>Люди и доступы</h3></div></div>
+        <div class="expert-grid">${ctx.experts.map(renderExpertProfileCard).join("") || `<div class="empty-inline">Профилей нет.</div>`}</div>
+      </div>
+      <aside class="admin-detail-panel">
+        <span class="eyebrow">Профиль</span>
+        ${selected ? `
+          <h3>${escapeHtml(selected.display_name)}</h3>
+          <div class="detail-table">
+            <div><span>Email</span><strong>${escapeHtml(selected.email)}</strong></div>
+            <div><span>Роль</span><strong>${escapeHtml(roleLabels[selected.role] || selected.role)}</strong></div>
+            <div><span>Статус</span><strong>${escapeHtml(selected.status || "active")}</strong></div>
+            <div><span>Режим</span><strong>${escapeHtml(selected.mode || "expert")}</strong></div>
+            <div><span>Создан</span><strong>${escapeHtml(displayDate(selected.created_at))}</strong></div>
+          </div>
+          <div class="application-meta">${adminPills(selected.legal_areas || [])}</div>
+          <div class="admin-note-row"><span>Регалии</span><strong>${escapeHtml(selected.admin_credentials || "не заполнены")}</strong></div>
+        ` : `<div class="empty-inline">Выберите профиль.</div>`}
+      </aside>
+    </section>
+  `;
+}
+
+function renderProjectCard(project, assignments) {
+  const count = assignments.filter((item) => item.project_id === project.id).length;
+  return `
+    <article class="admin-select-card ${project.id === state.selectedAdminProjectId ? "active" : ""}" data-admin-project="${escapeHtml(project.id)}">
+      <header><strong>${escapeHtml(project.name)}</strong><span class="chip">${escapeHtml(labels[project.task_type] || project.task_type)}</span></header>
+      <p>${escapeHtml(project.summary || "Описание не задано.")}</p>
+      <div class="application-meta">
+        <span class="chip">${escapeHtml(project.required_area || "область не задана")}</span>
+        <span class="chip">${escapeHtml(count)} заданий</span>
+      </div>
+    </article>
+  `;
+}
+
+function renderAdminProjects(ctx) {
+  const selected = ctx.selectedProject;
+  const projectAssignments = selected ? ctx.assignments.filter((item) => item.project_id === selected.id) : [];
+  return `
+    <section class="admin-section admin-two-column wide-left">
+      <div>
+        <div class="admin-section-head"><div><span class="eyebrow">Профиль проекта</span><h3>Проекты платформы</h3></div></div>
+        <div class="project-admin-grid">${ctx.projects.map((project) => renderProjectCard(project, ctx.assignments)).join("") || `<div class="empty-inline">Проектов нет.</div>`}</div>
+      </div>
+      <aside class="admin-detail-panel">
+        <span class="eyebrow">Проект</span>
+        ${selected ? `
+          <h3>${escapeHtml(selected.name)}</h3>
+          <p>${escapeHtml(selected.summary || "")}</p>
+          <div class="detail-table">
+            <div><span>ID</span><strong>${escapeHtml(selected.id)}</strong></div>
+            <div><span>Тип</span><strong>${escapeHtml(labels[selected.task_type] || selected.task_type)}</strong></div>
+            <div><span>Область</span><strong>${escapeHtml(selected.required_area || "не задана")}</strong></div>
+            <div><span>Статус</span><strong>${escapeHtml(selected.status || "active")}</strong></div>
+            <div><span>Задания</span><strong>${escapeHtml(projectAssignments.length)}</strong></div>
+          </div>
+          <button class="secondary-button" type="button" data-export-project="${escapeHtml(selected.id)}">Скачать JSON проекта</button>
+        ` : `<div class="empty-inline">Выберите проект.</div>`}
+      </aside>
+    </section>
+  `;
+}
+
+function renderAdminAssignmentRow(assignment) {
+  return `
+    <article class="admin-assignment-row ${assignment.id === state.selectedAdminAssignmentId ? "active" : ""}" data-admin-assignment="${escapeHtml(assignment.id)}">
+      <div>
+        <strong>${escapeHtml(assignment.task_title)}</strong>
+        <small>${escapeHtml(assignment.project_name)} · ${escapeHtml(labels[assignment.task_type] || assignment.task_type)}</small>
+      </div>
+      <div class="application-meta">
+        ${statusChip(assignment.status)}
+        <span class="chip">${escapeHtml(assignment.due_label || "без срока")}</span>
+      </div>
+    </article>
+  `;
+}
+
+function renderAdminAssignments(ctx) {
+  const selected = ctx.selectedAssignment;
+  const selectedProject = selected ? ctx.projects.find((item) => item.id === selected.project_id) : null;
+  return `
+    <section class="admin-section admin-two-column wide-left">
+      <div>
+        <div class="admin-section-head"><div><span class="eyebrow">Профиль задания</span><h3>Очередь и состояние</h3></div></div>
+        <div class="admin-list">${ctx.assignments.map(renderAdminAssignmentRow).join("") || `<div class="empty-inline">Заданий нет.</div>`}</div>
+      </div>
+      <aside class="admin-detail-panel">
+        <span class="eyebrow">Задание</span>
+        ${selected ? `
+          <h3>${escapeHtml(selected.task_title)}</h3>
+          <div class="detail-table">
+            <div><span>ID</span><strong>${escapeHtml(selected.id)}</strong></div>
+            <div><span>Проект</span><strong>${escapeHtml(selected.project_name)}</strong></div>
+            <div><span>Тип</span><strong>${escapeHtml(labels[selected.task_type] || selected.task_type)}</strong></div>
+            <div><span>Статус</span><strong>${escapeHtml(labels[selected.status] || selected.status)}</strong></div>
+            <div><span>Готовность</span><strong>${escapeHtml(selected.completion?.percent || 0)}%</strong></div>
+          </div>
+          <div class="admin-actions-row">
+            <button class="secondary-button" type="button" data-admin-open-assignment="${escapeHtml(selected.id)}">Открыть задание</button>
+            ${selectedProject ? `<button class="secondary-button" type="button" data-export-project="${escapeHtml(selectedProject.id)}" data-export-assignment="${escapeHtml(selected.id)}">Скачать JSON задания</button>` : ""}
+          </div>
+        ` : `<div class="empty-inline">Выберите задание.</div>`}
+      </aside>
+    </section>
+  `;
+}
+
+function choiceButtons(items, inputId, selectedValue = "") {
+  return `
+    <div class="admin-choice-grid" data-choice-group="${escapeHtml(inputId)}">
+      ${items.map(([value, label, meta = ""]) => `
+        <button class="admin-choice ${String(selectedValue) === String(value) ? "selected" : ""}" type="button" data-admin-choice="${escapeHtml(value)}" data-choice-target="${escapeHtml(inputId)}" ${meta ? `data-choice-meta="${escapeHtml(meta)}"` : ""}>${escapeHtml(label)}</button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderAdminCreate(ctx) {
+  const areaItems = (state.meta.legal_areas || []).map((area) => [area, area]);
+  const projectItems = ctx.projects.map((project) => [project.id, project.name, project.task_type]);
+  const expertItems = ctx.experts.map((expert) => [expert.id, `${expert.display_name} · ${roleLabels[expert.role] || expert.role}`]);
+  const defaultProject = ctx.selectedProject || ctx.projects[0] || {};
+  const defaultUser = ctx.selectedUser || ctx.experts[0] || {};
+  return `
+    <section class="admin-section admin-two-column">
+      <form class="admin-form-panel" id="admin-project-create-form">
+        <div class="admin-section-head"><div><span class="eyebrow">Создать проект</span><h3>Новый поток заданий</h3></div></div>
+        <label>ID проекта<input name="id" placeholder="латиница, можно пустым" /></label>
+        <label>Название<input name="name" placeholder="например: Проверка договоров" required /></label>
+        <label>Описание<textarea name="summary" rows="4" placeholder="что собираем и для чего" required></textarea></label>
+        <input id="admin-project-required-area" name="required_area" type="hidden" value="${escapeHtml(areaItems[0]?.[0] || "")}" />
+        <div><span class="form-label">Область права</span>${choiceButtons(areaItems, "admin-project-required-area", areaItems[0]?.[0] || "")}</div>
+        <input id="admin-project-task-type" name="task_type" type="hidden" value="classification" />
+        <div><span class="form-label">Тип задания</span>${choiceButtons(taskTypeOptions, "admin-project-task-type", "classification")}</div>
+        <button class="primary-button" type="submit">Создать проект</button>
+      </form>
+      <form class="admin-form-panel" id="admin-assignment-create-form">
+        <div class="admin-section-head"><div><span class="eyebrow">Создать задание</span><h3>Назначить работу</h3></div></div>
+        <input id="admin-assignment-project" name="project_id" type="hidden" value="${escapeHtml(defaultProject.id || "")}" />
+        <input id="admin-assignment-task-type" name="task_type" type="hidden" value="${escapeHtml(defaultProject.task_type || "classification")}" />
+        <div><span class="form-label">Проект</span>${choiceButtons(projectItems, "admin-assignment-project", defaultProject.id || "")}</div>
+        <input id="admin-assignment-user" name="user_id" type="hidden" value="${escapeHtml(defaultUser.id || "")}" />
+        <div><span class="form-label">Кому назначить</span>${choiceButtons(expertItems, "admin-assignment-user", defaultUser.id || "")}</div>
+        <label>Название задания<input name="task_title" placeholder="короткое рабочее название" required /></label>
+        <label>Материал<textarea name="source_text" rows="6" placeholder="текст обращения, вопрос, исходный фрагмент или описание пары" required></textarea></label>
+        <label>Дополнительный ответ / вариант A<textarea name="option_a" rows="3" placeholder="опционально"></textarea></label>
+        <label>Вариант B<textarea name="option_b" rows="3" placeholder="опционально"></textarea></label>
+        <label>Срок<input name="due_at" type="datetime-local" /></label>
+        <button class="primary-button" type="submit">Создать задание</button>
+      </form>
+    </section>
+  `;
+}
+
+function renderAdminExport(ctx) {
+  return `
+    <section class="admin-section">
+      <div class="admin-section-head"><div><span class="eyebrow">Экспорт</span><h3>JSON по проектам и заданиям</h3></div></div>
+      <div class="export-list">
+        ${ctx.exports.map((item) => `
+          <div class="export-row">
+            <div><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.project_id)}</small></div>
+            <button class="secondary-button" type="button" data-export-project="${escapeHtml(item.project_id)}">Скачать JSON</button>
+          </div>
+        `).join("") || `<div class="empty-inline">Проекты не найдены.</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function renderAdminActiveTab(admin, ctx) {
+  if (state.adminActiveTab === "applications") return renderAdminApplications(ctx);
+  if (state.adminActiveTab === "experts") return renderAdminExperts(ctx);
+  if (state.adminActiveTab === "projects") return renderAdminProjects(ctx);
+  if (state.adminActiveTab === "assignments") return renderAdminAssignments(ctx);
+  if (state.adminActiveTab === "create") return renderAdminCreate(ctx);
+  if (state.adminActiveTab === "export") return renderAdminExport(ctx);
+  return renderAdminSummary(admin, ctx);
+}
+
+function renderAdminSurface() {
+  const admin = state.dashboard?.admin_surface;
+  if (!admin) {
+    els.adminSurface.classList.add("hidden");
+    return;
+  }
+  const ctx = adminContext(admin);
+  els.adminSurface.classList.remove("hidden");
+  els.adminSurface.innerHTML = `
+    <div class="admin-header">
+      <div><span class="eyebrow">Администрирование</span><h2>Контроль платформы</h2></div>
+      ${adminTabNav()}
+    </div>
+    <div class="admin-content">${renderAdminActiveTab(admin, ctx)}</div>
+  `;
+  bindAdminSurface();
+}
+
 async function decideApplication(button) {
   const card = button.closest("[data-application-id]");
   if (!card) return;
@@ -341,8 +704,10 @@ async function decideApplication(button) {
   await loadDashboard(state.selectedAssignmentId);
 }
 
-async function downloadProjectExport(projectId) {
-  const response = await fetch(`/api/admin/export?project_id=${encodeURIComponent(projectId)}`, {
+async function downloadProjectExport(projectId, assignmentId = "") {
+  const params = new URLSearchParams({ project_id: projectId });
+  if (assignmentId) params.set("assignment_id", assignmentId);
+  const response = await fetch(`/api/admin/export?${params.toString()}`, {
     headers: { authorization: `Bearer ${state.token}` },
   });
   if (!response.ok) {
@@ -353,11 +718,97 @@ async function downloadProjectExport(projectId) {
   const href = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = href;
-  link.download = `${projectId}-results.json`;
+  link.download = assignmentId ? `${projectId}-${assignmentId}.json` : `${projectId}-results.json`;
   document.body.appendChild(link);
   link.click();
   link.remove();
   URL.revokeObjectURL(href);
+}
+
+function bindAdminSurface() {
+  els.adminSurface.querySelectorAll("[data-admin-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.adminActiveTab = button.dataset.adminTab || "summary";
+      localStorage.setItem("expert_platform_admin_tab", state.adminActiveTab);
+      renderAdminSurface();
+    });
+  });
+  els.adminSurface.querySelectorAll("[data-admin-project]").forEach((node) => {
+    node.addEventListener("click", () => {
+      state.selectedAdminProjectId = node.dataset.adminProject || "";
+      localStorage.setItem("expert_platform_admin_project", state.selectedAdminProjectId);
+      renderAdminSurface();
+    });
+  });
+  els.adminSurface.querySelectorAll("[data-admin-assignment]").forEach((node) => {
+    node.addEventListener("click", () => {
+      state.selectedAdminAssignmentId = node.dataset.adminAssignment || "";
+      localStorage.setItem("expert_platform_admin_assignment", state.selectedAdminAssignmentId);
+      renderAdminSurface();
+    });
+  });
+  els.adminSurface.querySelectorAll("[data-admin-user]").forEach((node) => {
+    node.addEventListener("click", () => {
+      state.selectedAdminUserId = node.dataset.adminUser || "";
+      localStorage.setItem("expert_platform_admin_user", state.selectedAdminUserId);
+      renderAdminSurface();
+    });
+  });
+  els.adminSurface.querySelectorAll("[data-admin-choice]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const input = document.getElementById(button.dataset.choiceTarget);
+      if (input) input.value = button.dataset.adminChoice || "";
+      button.closest("[data-choice-group]")?.querySelectorAll("[data-admin-choice]").forEach((node) => node.classList.remove("selected"));
+      button.classList.add("selected");
+      if (button.dataset.choiceTarget === "admin-assignment-project") {
+        const taskTypeInput = document.getElementById("admin-assignment-task-type");
+        if (taskTypeInput && button.dataset.choiceMeta) taskTypeInput.value = button.dataset.choiceMeta;
+      }
+    });
+  });
+  els.adminSurface.querySelectorAll("[data-application-decision]").forEach((button) => {
+    button.addEventListener("click", () => decideApplication(button).catch((error) => toast(error.message)));
+  });
+  els.adminSurface.querySelectorAll("[data-export-project]").forEach((button) => {
+    button.addEventListener("click", () => downloadProjectExport(button.dataset.exportProject, button.dataset.exportAssignment || "").catch((error) => toast(error.message)));
+  });
+  els.adminSurface.querySelectorAll("[data-admin-open-assignment]").forEach((button) => {
+    button.addEventListener("click", () => selectAssignment(button.dataset.adminOpenAssignment).catch((error) => toast(error.message)));
+  });
+  els.adminSurface.querySelector("#admin-project-create-form")?.addEventListener("submit", (event) => {
+    adminCreateProject(event).catch((error) => toast(error.message));
+  });
+  els.adminSurface.querySelector("#admin-assignment-create-form")?.addEventListener("submit", (event) => {
+    adminCreateAssignment(event).catch((error) => toast(error.message));
+  });
+}
+
+async function adminCreateProject(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const payload = Object.fromEntries(new FormData(form).entries());
+  const response = await api("/api/admin/projects", { method: "POST", body: JSON.stringify(payload) });
+  state.selectedAdminProjectId = response.project?.id || state.selectedAdminProjectId;
+  state.adminActiveTab = "projects";
+  localStorage.setItem("expert_platform_admin_project", state.selectedAdminProjectId);
+  localStorage.setItem("expert_platform_admin_tab", state.adminActiveTab);
+  form.reset();
+  toast("Проект создан");
+  await loadDashboard(state.selectedAssignmentId);
+}
+
+async function adminCreateAssignment(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const payload = Object.fromEntries(new FormData(form).entries());
+  const response = await api("/api/admin/assignments", { method: "POST", body: JSON.stringify(payload) });
+  state.selectedAdminAssignmentId = response.assignment?.id || state.selectedAdminAssignmentId;
+  state.adminActiveTab = "assignments";
+  localStorage.setItem("expert_platform_admin_assignment", state.selectedAdminAssignmentId);
+  localStorage.setItem("expert_platform_admin_tab", state.adminActiveTab);
+  form.reset();
+  toast("Задание создано");
+  await loadDashboard(response.assignment?.id || state.selectedAssignmentId);
 }
 
 async function selectAssignment(id) {
