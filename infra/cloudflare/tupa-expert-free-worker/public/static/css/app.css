@@ -1213,6 +1213,85 @@ legend {
   gap: 12px;
 }
 
+.admin-request-card {
+  gap: 16px;
+}
+
+.request-thread,
+.support-request-history {
+  display: grid;
+  gap: 12px;
+}
+
+.request-bubble {
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 13px 14px;
+  min-width: 0;
+}
+
+.request-bubble span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.request-bubble p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.request-bubble small,
+.request-pending {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.request-bubble.outbound {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--line));
+  background: color-mix(in srgb, var(--primary) 7%, var(--surface));
+}
+
+.admin-request-reply-form,
+.support-history-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.support-request-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  padding: 14px;
+}
+
+.support-request-card header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.support-request-card header strong,
+.support-request-card header small {
+  display: block;
+}
+
+.support-request-card header small {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 3px;
+}
+
 .application-card header,
 .export-row,
 .expert-profile-card header,

@@ -1299,6 +1299,28 @@ async function adminProjectMembership(request, env, account, action) {
   return json({ user_id: userId, project_id: projectId, status });
 }
 
+async function updateAdminRequest(request, env, account, requestId, action) {
+  if (!requireAdmin(account)) return error(403, "Доступно только администратору.");
+  const body = await readJson(request);
+  const response = String(body.response || "").trim().slice(0, 4000);
+  if (action === "reply" && !response) return error(400, "Напишите ответ пользователю.");
+  const existing = await env.EXPERT_DB.prepare("SELECT * FROM admin_requests WHERE id = ?").bind(requestId).first();
+  if (!existing) return error(404, "Обращение не найдено.");
+  const status = action === "close" ? "closed" : "answered";
+  const finalResponse = response || existing.response || "";
+  const updatedAt = nowIso();
+  await env.EXPERT_DB.prepare(
+    "UPDATE admin_requests SET status = ?, response = ?, responded_by = ?, responded_at = ?, updated_at = ? WHERE id = ?"
+  ).bind(status, finalResponse, account.user.id, updatedAt, updatedAt, requestId).run();
+  const updated = await env.EXPERT_DB.prepare("SELECT * FROM admin_requests WHERE id = ?").bind(requestId).first();
+  await audit(env, account.user.id, `admin.request_${status}`, "admin_request", requestId, {
+    user_id: existing.user_id,
+    assignment_id: existing.assignment_id || null,
+    has_response: Boolean(finalResponse),
+  });
+  return json({ request: updated });
+}
+
 async function adminImpersonate(request, env, account) {
   if (!requireAdmin(account)) return error(403, "Доступно только администратору.");
   const body = await readJson(request);
@@ -1562,6 +1584,10 @@ async function handleApi(request, env) {
   if (path === "/api/admin/impersonate" && request.method === "POST") return adminImpersonate(request, env, account);
   const applicationDecisionMatch = path.match(/^\/api\/admin\/applications\/([^/]+)\/decision$/);
   if (applicationDecisionMatch && request.method === "POST") return decideApplication(request, env, account, applicationDecisionMatch[1]);
+  const adminRequestActionMatch = path.match(/^\/api\/admin\/requests\/([^/]+)\/(reply|close)$/);
+  if (adminRequestActionMatch && request.method === "POST") {
+    return updateAdminRequest(request, env, account, adminRequestActionMatch[1], adminRequestActionMatch[2]);
+  }
   if (path === "/api/admin/export" && request.method === "GET") return exportProjectResults(request, env, account);
   const assignmentMatch = path.match(/^\/api\/assignments\/([^/]+)(?:\/([^/]+))?$/);
   if (assignmentMatch) {
@@ -1572,7 +1598,8 @@ async function handleApi(request, env) {
     }
     if (request.method === "POST") return updateAssignment(env, account, assignmentId, action, request);
   }
-  if (path === "/api/admin/requests" && account.user.role === "admin") {
+  if (path === "/api/admin/requests" && request.method === "GET") {
+    if (!requireAdmin(account)) return error(403, "Доступно только администратору.");
     const requests = (await env.EXPERT_DB.prepare("SELECT * FROM admin_requests ORDER BY created_at DESC LIMIT 100").all()).results || [];
     return json({ requests });
   }

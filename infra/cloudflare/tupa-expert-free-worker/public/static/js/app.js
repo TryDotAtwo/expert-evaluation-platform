@@ -104,6 +104,9 @@ const labels = {
   requested: "запрошено",
   available: "доступно",
   locked: "закрыто",
+  new: "новое",
+  answered: "отвечено",
+  closed: "закрыто",
   revoked: "отозвано",
   rejected: "отклонено",
   classification: "классификация",
@@ -676,6 +679,29 @@ function renderProfileSummaryWorkspace(dashboard) {
 }
 
 function renderAdminContactWorkspace() {
+  const requests = state.dashboard?.support_requests || [];
+  const history = requests.map((item) => `
+    <article class="support-request-card">
+      <header>
+        <div>
+          <strong>${escapeHtml(displayDate(item.created_at))}</strong>
+          <small>${item.assignment_id ? `задание ${escapeHtml(item.assignment_id)}` : "общее обращение"}</small>
+        </div>
+        ${statusChip(item.status)}
+      </header>
+      <div class="request-bubble inbound">
+        <span>Ваше обращение</span>
+        <p>${escapeHtml(item.message)}</p>
+      </div>
+      ${item.response ? `
+        <div class="request-bubble outbound">
+          <span>Ответ администратора</span>
+          <p>${escapeHtml(item.response)}</p>
+          <small>${escapeHtml(displayDate(item.responded_at || item.updated_at))}</small>
+        </div>
+      ` : `<div class="request-pending">Ответ администратора еще не добавлен.</div>`}
+    </article>
+  `).join("");
   els.taskCard.innerHTML = `
     <div class="workspace-head">
       <div><span class="eyebrow">Обращение админу</span><h1>Сообщение через агента</h1></div>
@@ -686,6 +712,12 @@ function renderAdminContactWorkspace() {
         <label>Текст обращения<textarea name="message" rows="7" placeholder="что нужно решить администратору" required></textarea></label>
         <button class="primary-button" type="submit">Отправить админу</button>
       </form>
+    </section>
+    <section class="admin-form-panel contact-panel support-history-panel">
+      <div class="admin-section-head"><div><span class="eyebrow">История</span><h3>Ваши обращения</h3></div></div>
+      <div class="support-request-history">
+        ${history || `<div class="empty-inline">Обращений пока нет.</div>`}
+      </div>
     </section>
   `;
   els.taskCard.querySelector("#admin-contact-form")?.addEventListener("submit", async (event) => {
@@ -1290,18 +1322,49 @@ function renderAdminRequests(ctx) {
     <section class="admin-section">
       <div class="admin-section-head"><div><span class="eyebrow">Обращения</span><h3>Сообщения через агента</h3></div></div>
       <div class="application-list">
-        ${ctx.requests.map((item) => `
-          <article class="application-card">
-            <header>
-              <div><strong>${escapeHtml(item.user_id)}</strong><small>${escapeHtml(displayDate(item.created_at))}${item.assignment_id ? ` · ${escapeHtml(item.assignment_id)}` : ""}</small></div>
-              ${statusChip(item.status)}
-            </header>
-            <p>${escapeHtml(item.message)}</p>
-            ${item.assignment_id ? `<button class="secondary-button" type="button" data-admin-open-assignment="${escapeHtml(item.assignment_id)}">Открыть задание и вступить в дискуссию</button>` : ""}
-          </article>
-        `).join("") || `<div class="empty-inline">Обращений нет.</div>`}
+        ${ctx.requests.map((item) => renderAdminRequestCard(item)).join("") || `<div class="empty-inline">Обращений нет.</div>`}
       </div>
     </section>
+  `;
+}
+
+function renderAdminRequestCard(item) {
+  const resolved = item.status === "answered" || item.status === "closed";
+  const requestMeta = `${escapeHtml(displayDate(item.created_at))}${item.assignment_id ? ` · ${escapeHtml(item.assignment_id)}` : ""}`;
+  return `
+    <article class="application-card admin-request-card" data-admin-request-id="${escapeHtml(item.id)}">
+      <header>
+        <div><strong>${escapeHtml(item.user_id)}</strong><small>${requestMeta}</small></div>
+        ${statusChip(item.status)}
+      </header>
+      <div class="request-thread">
+        <div class="request-bubble inbound">
+          <span>Запрос пользователя</span>
+          <p>${escapeHtml(item.message)}</p>
+        </div>
+        ${item.response ? `
+          <div class="request-bubble outbound">
+            <span>Ответ администратора</span>
+            <p>${escapeHtml(item.response)}</p>
+            <small>${escapeHtml(displayDate(item.responded_at || item.updated_at))}${item.responded_by ? ` · ${escapeHtml(item.responded_by)}` : ""}</small>
+          </div>
+        ` : ""}
+      </div>
+      ${resolved ? `
+        <div class="admin-actions-row">
+          ${item.assignment_id ? `<button class="secondary-button" type="button" data-admin-open-assignment="${escapeHtml(item.assignment_id)}">Открыть задание и вступить в дискуссию</button>` : ""}
+        </div>
+      ` : `
+        <form class="admin-request-reply-form" data-admin-request-id="${escapeHtml(item.id)}">
+          <label>Ответ пользователю<textarea name="response" rows="4" placeholder="Напишите понятный ответ. Пользователь увидит его в истории обращений." required></textarea></label>
+          <div class="admin-actions-row">
+            <button class="primary-button" type="submit">Ответить</button>
+            <button class="secondary-button" type="button" data-admin-request-close="${escapeHtml(item.id)}">Закрыть без ответа</button>
+            ${item.assignment_id ? `<button class="secondary-button" type="button" data-admin-open-assignment="${escapeHtml(item.assignment_id)}">Открыть задание и вступить в дискуссию</button>` : ""}
+          </div>
+        </form>
+      `}
+    </article>
   `;
 }
 
@@ -1438,6 +1501,15 @@ function bindAdminSurface() {
   els.adminSurface.querySelectorAll("[data-admin-open-assignment]").forEach((button) => {
     button.addEventListener("click", () => selectAssignment(button.dataset.adminOpenAssignment).catch((error) => toast(error.message)));
   });
+  els.adminSurface.querySelectorAll(".admin-request-reply-form").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      replyAdminRequest(event.currentTarget).catch((error) => toast(error.message));
+    });
+  });
+  els.adminSurface.querySelectorAll("[data-admin-request-close]").forEach((button) => {
+    button.addEventListener("click", () => closeAdminRequest(button).catch((error) => toast(error.message)));
+  });
   els.adminSurface.querySelectorAll("[data-membership-action]").forEach((button) => {
     button.addEventListener("click", () => adminProjectMembership(button).catch((error) => toast(error.message)));
   });
@@ -1463,6 +1535,32 @@ function bindAdminSurface() {
   els.adminSurface.querySelector("#admin-assignment-create-form")?.addEventListener("submit", (event) => {
     adminCreateAssignment(event).catch((error) => toast(error.message));
   });
+}
+
+async function replyAdminRequest(form) {
+  const requestId = form.dataset.adminRequestId || "";
+  const response = String(new FormData(form).get("response") || "").trim();
+  if (!response) {
+    toast("Напишите ответ пользователю.");
+    return;
+  }
+  await api(`/api/admin/requests/${encodeURIComponent(requestId)}/reply`, {
+    method: "POST",
+    body: JSON.stringify({ response }),
+  });
+  form.reset();
+  toast("Ответ сохранен");
+  await loadDashboard();
+}
+
+async function closeAdminRequest(button) {
+  const requestId = button.dataset.adminRequestClose || "";
+  await api(`/api/admin/requests/${encodeURIComponent(requestId)}/close`, {
+    method: "POST",
+    body: JSON.stringify({ response: "" }),
+  });
+  toast("Обращение закрыто");
+  await loadDashboard();
 }
 
 async function adminProjectMembership(button) {
