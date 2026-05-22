@@ -1175,6 +1175,42 @@ legend {
   margin-top: 7px;
 }
 
+.area-pill-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 7px;
+}
+
+.area-check-pill {
+  cursor: pointer;
+}
+
+.area-check-pill input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.area-check-pill span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 820;
+  padding: 7px 10px;
+}
+
+.area-check-pill input:checked + span {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  color: var(--primary-dark);
+}
+
 .application-decision {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
@@ -1314,8 +1350,8 @@ legend {
   --muted: #9db6bd;
   --line: #284046;
   --line-strong: #35535b;
-  --primary: #2dd4bf;
-  --primary-dark: #5eead4;
+  --primary: #2a8f86;
+  --primary-dark: #8dcfca;
   --amber: #f59e0b;
   --blue: #60a5fa;
   --violet: #a78bfa;
@@ -1329,8 +1365,8 @@ legend {
 }
 
 [data-theme="dark"] .brand-mark {
-  background: #22c7b8;
-  color: #071113;
+  background: #17393d;
+  color: #d7fffb;
 }
 
 [data-theme="dark"] .google-button,
@@ -1348,6 +1384,34 @@ legend {
 [data-theme="dark"] .agent-message.user {
   background: #0f3f42;
   border-color: #1d777c;
+}
+
+[data-theme="dark"] .primary-button {
+  background: #1f756f;
+  color: #ecfffd;
+}
+
+[data-theme="dark"] .admin-tabs button.active,
+[data-theme="dark"] .admin-choice.selected,
+[data-theme="dark"] .filter-chip.active,
+[data-theme="dark"] .area-check-pill input:checked + span,
+[data-theme="dark"] .project-scope-button.active {
+  border-color: #3e8f89;
+  background: rgba(42, 143, 134, 0.16);
+  color: #a8d9d5;
+  box-shadow: none;
+}
+
+[data-theme="dark"] .chip,
+[data-theme="dark"] .status-pill,
+[data-theme="dark"] .agent-live {
+  background: rgba(42, 143, 134, 0.14);
+  border-color: #335c61;
+  color: #b9d4d6;
+}
+
+[data-theme="dark"] .danger-button {
+  background: #9f3f52;
 }
 
 .brand-mark {
@@ -1562,6 +1626,64 @@ legend {
   border-color: var(--primary);
   background: color-mix(in srgb, var(--primary) 14%, transparent);
   color: var(--primary-dark);
+}
+
+.project-scope-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 0 10px;
+  scrollbar-width: thin;
+}
+
+.project-scope-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  max-width: 260px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+
+.project-scope-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-scope-button em,
+.project-scope-button small {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 850;
+  padding: 3px 7px;
+}
+
+.project-scope-button.active {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+}
+
+.project-context-strip {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.project-context-strip span {
+  color: var(--muted);
 }
 
 .task-table {

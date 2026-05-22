@@ -93,6 +93,31 @@ function normalizeTaskType(value, fallback = "generic_review") {
   return normalized || fallback;
 }
 
+function normalizeLegalAreas(input) {
+  const values = Array.isArray(input) ? input : String(input || "").split(/[,\n;]/);
+  return Array.from(new Set(values.map((area) => String(area || "").trim()).filter((area) => LEGAL_AREAS.includes(area))));
+}
+
+function projectLegalAreas(project) {
+  const parsed = normalizeLegalAreas(safeJsonParse(project?.legal_areas_json, []));
+  if (parsed.length) return parsed;
+  return normalizeLegalAreas(project?.required_area ? [project.required_area] : []);
+}
+
+function assignmentLegalAreas(row, project) {
+  const parsed = normalizeLegalAreas(safeJsonParse(row?.legal_areas_json, []));
+  return parsed.length ? parsed : projectLegalAreas(project);
+}
+
+function hasAreaIntersection(requiredAreas, profileAreas) {
+  if (!requiredAreas.length) return true;
+  return requiredAreas.some((area) => profileAreas.has(area));
+}
+
+function projectVisibleTo(project, user) {
+  return user?.role === "admin" || (project?.visibility || "public") !== "hidden";
+}
+
 function adminEmails(env) {
   return new Set(String(env.ADMIN_EMAILS || "").split(",").map(normalizeEmail).filter(Boolean));
 }
@@ -223,8 +248,8 @@ async function ensureProjects(env) {
   if (first) return;
   const createdAt = nowIso();
   await env.EXPERT_DB.batch(projectSeedRows().map((row) => env.EXPERT_DB.prepare(
-    "INSERT OR IGNORE INTO projects (id, name, summary, required_area, task_type, status, accent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-  ).bind(...row, createdAt)));
+    "INSERT OR IGNORE INTO projects (id, name, summary, required_area, task_type, status, accent, created_at, legal_areas_json, visibility) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(...row, createdAt, JSON.stringify(normalizeLegalAreas(row[3] ? [row[3]] : [])), "public")));
 }
 
 function taskPayloadFor(type) {
@@ -326,8 +351,9 @@ async function ensureUserAssignments(env, user) {
     index += 1;
     const id = `${user.id}-${project.id}`;
     const payload = taskPayloadFor(project.task_type);
+    const areas = projectLegalAreas(project);
     statements.push(env.EXPERT_DB.prepare(
-      "INSERT OR IGNORE INTO assignments (id, user_id, project_id, task_type, task_title, status, stored_status, revision, due_at, priority, payload_json, draft_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT OR IGNORE INTO assignments (id, user_id, project_id, task_type, task_title, status, stored_status, revision, due_at, priority, payload_json, draft_json, created_at, updated_at, legal_areas_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     ).bind(
       id,
       user.id,
@@ -342,7 +368,8 @@ async function ensureUserAssignments(env, user) {
       JSON.stringify(payload),
       index === 2 ? JSON.stringify({ note: "Черновик создан для проверки сохранения состояния." }) : "{}",
       createdAt,
-      createdAt
+      createdAt,
+      JSON.stringify(areas)
     ));
     statements.push(env.EXPERT_DB.prepare(
       "INSERT OR IGNORE INTO project_memberships (user_id, project_id, status, created_at) VALUES (?, ?, ?, ?)"
@@ -781,28 +808,35 @@ function assignmentCard(row, project) {
     due_at: row.due_at,
     due_label: row.due_at ? new Date(row.due_at).toLocaleDateString("ru-RU", { day: "2-digit", month: "short" }) : "без срока",
     revision: row.revision,
+    legal_areas: assignmentLegalAreas(row, project),
     completion: completionForAssignment(row),
   };
 }
 
 async function dashboard(env, account) {
   await ensureUserAssignments(env, account.user);
-  const projectsResult = await env.EXPERT_DB.prepare("SELECT * FROM projects ORDER BY created_at, id").all();
+  const projectsResult = account.user.role === "admin"
+    ? await env.EXPERT_DB.prepare("SELECT * FROM projects ORDER BY created_at, id").all()
+    : await env.EXPERT_DB.prepare("SELECT * FROM projects WHERE COALESCE(visibility, 'public') != 'hidden' ORDER BY created_at, id").all();
   const membershipsResult = await env.EXPERT_DB.prepare("SELECT * FROM project_memberships WHERE user_id = ?").bind(account.user.id).all();
   const assignmentsResult = account.user.role === "admin"
     ? await env.EXPERT_DB.prepare("SELECT * FROM assignments ORDER BY due_at, created_at").all()
     : await env.EXPERT_DB.prepare(
-      "SELECT a.* FROM assignments a LEFT JOIN project_memberships pm ON pm.project_id = a.project_id AND pm.user_id = a.user_id WHERE a.user_id = ? AND COALESCE(pm.status, 'active') = 'active' ORDER BY a.due_at, a.created_at"
+      "SELECT a.* FROM assignments a LEFT JOIN project_memberships pm ON pm.project_id = a.project_id AND pm.user_id = a.user_id LEFT JOIN projects p ON p.id = a.project_id WHERE a.user_id = ? AND COALESCE(pm.status, 'active') = 'active' AND COALESCE(p.visibility, 'public') != 'hidden' ORDER BY a.due_at, a.created_at"
     ).bind(account.user.id).all();
   const profile = await getProfile(env, account.user.id);
   const legalAreas = new Set(safeJsonParse(profile?.legal_areas_json, []));
   const membershipMap = new Map((membershipsResult.results || []).map((item) => [item.project_id, item.status]));
   const projects = (projectsResult.results || []).map((project) => {
-    const eligible = !project.required_area || legalAreas.has(project.required_area) || account.user.role === "admin";
+    const projectAreas = projectLegalAreas(project);
+    const eligible = hasAreaIntersection(projectAreas, legalAreas) || account.user.role === "admin";
     const status = membershipMap.get(project.id) || (eligible ? "available" : "locked");
     const count = (assignmentsResult.results || []).filter((assignment) => assignment.project_id === project.id).length;
     return {
       ...project,
+      visibility: project.visibility || "public",
+      legal_areas: projectAreas,
+      required_area: project.required_area || projectAreas[0] || "",
       access: eligible ? "eligible" : "requires_area",
       membership_status: status,
       counts: { assigned: count },
@@ -823,10 +857,15 @@ async function dashboard(env, account) {
   const experts = account.user.role === "admin" ? await listExpertProfiles(env) : [];
   const projectMemberships = account.user.role === "admin"
     ? (await env.EXPERT_DB.prepare(
-      "SELECT pm.user_id, pm.project_id, pm.status, pm.created_at, u.email, u.display_name, u.role, p.name AS project_name, p.required_area FROM project_memberships pm LEFT JOIN users u ON u.id = pm.user_id LEFT JOIN projects p ON p.id = pm.project_id ORDER BY CASE pm.status WHEN 'requested' THEN 0 WHEN 'active' THEN 1 ELSE 2 END, pm.created_at DESC LIMIT 1000"
+      "SELECT pm.user_id, pm.project_id, pm.status, pm.created_at, u.email, u.display_name, u.role, p.name AS project_name, p.required_area, p.legal_areas_json, p.visibility FROM project_memberships pm LEFT JOIN users u ON u.id = pm.user_id LEFT JOIN projects p ON p.id = pm.project_id ORDER BY CASE pm.status WHEN 'requested' THEN 0 WHEN 'active' THEN 1 ELSE 2 END, pm.created_at DESC LIMIT 1000"
     ).all()).results || []
     : [];
   const profileStats = await progressForUsers(env, [account.user.id]);
+  const serializedMemberships = projectMemberships.map((item) => ({
+    ...item,
+    legal_areas: normalizeLegalAreas(safeJsonParse(item.legal_areas_json, item.required_area ? [item.required_area] : [])),
+    visibility: item.visibility || "public",
+  }));
   return json({
     user: publicUser(account.user, profile),
     role: account.user.role,
@@ -838,17 +877,17 @@ async function dashboard(env, account) {
     profile_stats: profileStats[account.user.id] || emptyProgress(),
     admin_surface: account.user.role === "admin" ? {
       requests: adminRequests,
-      project_memberships: projectMemberships,
+      project_memberships: serializedMemberships,
       applications: applications.map((application) => ({
         ...application,
         legal_areas: safeJsonParse(application.legal_areas_json, []),
         wants_reviewer: Boolean(application.wants_reviewer),
         coauthor_consent: Boolean(application.coauthor_consent),
       })),
-      routing: projects.map((project) => ({ project_id: project.id, required_area: project.required_area, status: project.status })),
+      routing: projects.map((project) => ({ project_id: project.id, legal_areas: project.legal_areas, visibility: project.visibility, status: project.status })),
       experts,
       quality: { submitted: summary.submitted || 0, approved: summary.approved || 0, needs_rework: summary.needs_rework || 0 },
-      import_export: { imports: [], exports: projects.map((project) => ({ project_id: project.id, name: project.name })) },
+      import_export: { imports: [], exports: projects.map((project) => ({ project_id: project.id, name: project.name, visibility: project.visibility })) },
     } : null,
   });
 }
@@ -859,6 +898,7 @@ async function assignmentDetail(env, account, assignmentId) {
     : await env.EXPERT_DB.prepare("SELECT * FROM assignments WHERE id = ? AND user_id = ?").bind(assignmentId, account.user.id).first();
   if (!row) return null;
   const project = await env.EXPERT_DB.prepare("SELECT * FROM projects WHERE id = ?").bind(row.project_id).first();
+  if (!projectVisibleTo(project, account.user)) return null;
   const drafts = (await env.EXPERT_DB.prepare("SELECT * FROM assignment_drafts WHERE assignment_id = ? ORDER BY created_at DESC LIMIT 8").bind(row.id).all()).results || [];
   const submissions = (await env.EXPERT_DB.prepare("SELECT * FROM submissions WHERE assignment_id = ? ORDER BY created_at DESC LIMIT 8").bind(row.id).all()).results || [];
   const reviews = (await env.EXPERT_DB.prepare("SELECT * FROM reviews WHERE assignment_id = ? ORDER BY created_at DESC LIMIT 8").bind(row.id).all()).results || [];
@@ -880,12 +920,14 @@ async function assignmentDetail(env, account, assignmentId) {
       id: row.id,
       title: row.task_title,
       task_type: row.task_type,
+      legal_areas: assignmentLegalAreas(row, project),
       payload: safeJsonParse(row.payload_json, {}),
     },
     task_view: {
       id: row.id,
       title: row.task_title,
       task_type: row.task_type,
+      legal_areas: assignmentLegalAreas(row, project),
       payload: safeJsonParse(row.payload_json, {}),
     },
     history: {
@@ -997,13 +1039,15 @@ async function joinProject(request, env, account) {
   const projectId = String(body.project_id || "").trim();
   const project = await env.EXPERT_DB.prepare("SELECT * FROM projects WHERE id = ?").bind(projectId).first();
   if (!project) return error(404, "Проект не найден.");
+  if (!projectVisibleTo(project, account.user)) return error(404, "Проект не найден.");
   const existing = await env.EXPERT_DB.prepare("SELECT * FROM project_memberships WHERE user_id = ? AND project_id = ?").bind(account.user.id, projectId).first();
   if (existing?.status === "active") return json({ status: "active", project_id: projectId });
   if (existing?.status === "requested") return json({ status: "requested", project_id: projectId });
   const profile = await getProfile(env, account.user.id);
   const legalAreas = new Set(safeJsonParse(profile?.legal_areas_json, []));
-  if (project.required_area && !legalAreas.has(project.required_area) && account.user.role !== "admin") {
-    return error(403, "Для проекта нужна соответствующая область права.", { required_area: project.required_area });
+  const projectAreas = projectLegalAreas(project);
+  if (!hasAreaIntersection(projectAreas, legalAreas) && account.user.role !== "admin") {
+    return error(403, "Для проекта нужна соответствующая область права.", { required_areas: projectAreas });
   }
   const createdAt = nowIso();
   await env.EXPERT_DB.prepare(
@@ -1110,6 +1154,7 @@ async function exportProjectResults(request, env, account) {
       expert: { user_id: assignment.user_id, email: assignment.email, display_name: assignment.display_name, role: assignment.role },
       task_type: assignment.task_type,
       task_title: assignment.task_title,
+      legal_areas: assignmentLegalAreas(assignment, project),
       status: assignment.status,
       stored_status: assignment.stored_status,
       revision: assignment.revision,
@@ -1134,6 +1179,8 @@ async function exportProjectResults(request, env, account) {
       name: project.name,
       summary: project.summary,
       required_area: project.required_area,
+      legal_areas: projectLegalAreas(project),
+      visibility: project.visibility || "public",
       task_type: project.task_type,
       status: project.status,
     },
@@ -1154,8 +1201,10 @@ async function createAdminProject(request, env, account) {
   const body = await readJson(request);
   const name = String(body.name || "").trim().slice(0, 180);
   const summary = String(body.summary || "").trim().slice(0, 1200);
-  const requiredArea = LEGAL_AREAS.includes(body.required_area) ? body.required_area : "";
+  const legalAreas = normalizeLegalAreas(Array.isArray(body.legal_areas) && body.legal_areas.length ? body.legal_areas : body.required_area);
+  const requiredArea = legalAreas[0] || "";
   const taskType = normalizeTaskType(body.task_type, "classification");
+  const visibility = body.visibility === "hidden" || body.is_hidden === true || body.is_hidden === "on" ? "hidden" : "public";
   const explicitId = normalizeId(body.id);
   const id = explicitId || `project-${randomHex(6)}`;
   if (!name) return error(400, "Укажите название проекта.");
@@ -1164,10 +1213,10 @@ async function createAdminProject(request, env, account) {
   if (existing) return error(409, "Проект с таким ID уже существует.");
   const createdAt = nowIso();
   await env.EXPERT_DB.prepare(
-    "INSERT INTO projects (id, name, summary, required_area, task_type, status, accent, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-  ).bind(id, name, summary, requiredArea || null, taskType, "active", body.accent || "teal", createdAt).run();
-  await audit(env, account.user.id, "admin.project_created", "project", id, { name, required_area: requiredArea, task_type: taskType });
-  return json({ project: { id, name, summary, required_area: requiredArea, task_type: taskType, status: "active", created_at: createdAt } }, 201);
+    "INSERT INTO projects (id, name, summary, required_area, task_type, status, accent, created_at, legal_areas_json, visibility) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(id, name, summary, requiredArea || null, taskType, "active", body.accent || "teal", createdAt, JSON.stringify(legalAreas), visibility).run();
+  await audit(env, account.user.id, "admin.project_created", "project", id, { name, legal_areas: legalAreas, visibility, task_type: taskType });
+  return json({ project: { id, name, summary, required_area: requiredArea, legal_areas: legalAreas, visibility, task_type: taskType, status: "active", created_at: createdAt } }, 201);
 }
 
 async function createAdminAssignment(request, env, account) {
@@ -1187,6 +1236,7 @@ async function createAdminAssignment(request, env, account) {
   if (!user) return error(404, "Пользователь не найден.");
   if (!["expert", "reviewer", "admin"].includes(user.role)) return error(400, "Задание можно назначить только участнику платформы.");
   const taskType = normalizeTaskType(body.task_type || project.task_type, project.task_type);
+  const legalAreas = normalizeLegalAreas(Array.isArray(body.legal_areas) && body.legal_areas.length ? body.legal_areas : projectLegalAreas(project));
   const payload = payloadForAdminAssignment(taskType, body, title);
   const createdAt = nowIso();
   let dueAt = dueForIndex(3);
@@ -1201,7 +1251,7 @@ async function createAdminAssignment(request, env, account) {
       "INSERT OR IGNORE INTO project_memberships (user_id, project_id, status, created_at) VALUES (?, ?, ?, ?)"
     ).bind(user.id, project.id, "active", createdAt),
     env.EXPERT_DB.prepare(
-      "INSERT INTO assignments (id, user_id, project_id, task_type, task_title, status, stored_status, revision, due_at, priority, payload_json, draft_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO assignments (id, user_id, project_id, task_type, task_title, status, stored_status, revision, due_at, priority, payload_json, draft_json, created_at, updated_at, legal_areas_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     ).bind(
       id,
       user.id,
@@ -1216,10 +1266,11 @@ async function createAdminAssignment(request, env, account) {
       JSON.stringify(payload),
       "{}",
       createdAt,
-      createdAt
+      createdAt,
+      JSON.stringify(legalAreas)
     ),
   ]);
-  await audit(env, account.user.id, "admin.assignment_created", "assignment", id, { project_id: project.id, user_id: user.id, task_type: taskType });
+  await audit(env, account.user.id, "admin.assignment_created", "assignment", id, { project_id: project.id, user_id: user.id, task_type: taskType, legal_areas: legalAreas });
   return json({ assignment: assignmentCard(await env.EXPERT_DB.prepare("SELECT * FROM assignments WHERE id = ?").bind(id).first(), project) }, 201);
 }
 
