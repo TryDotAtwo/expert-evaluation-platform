@@ -612,17 +612,17 @@ p { color: var(--muted); line-height: 1.55; }
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 16px;
+  padding: 20px;
 }
 
 .task-head {
   border-bottom: 1px solid var(--line);
-  margin: -2px 0 16px;
-  padding-bottom: 16px;
+  margin: 0 0 22px;
+  padding: 0 0 20px;
 }
 
 .task-title h1 {
-  margin: 0 0 8px;
+  margin: 4px 0 12px;
   font-size: 24px;
   line-height: 1.08;
 }
@@ -631,6 +631,7 @@ p { color: var(--muted); line-height: 1.55; }
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin-top: 4px;
 }
 
 .stepper {
@@ -659,13 +660,13 @@ p { color: var(--muted); line-height: 1.55; }
 .content-grid {
   display: grid;
   grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
-  gap: 18px;
+  gap: 24px;
 }
 
 .review-grid {
   display: grid;
   grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
-  gap: 18px;
+  gap: 24px;
 }
 
 .source-box,
@@ -676,14 +677,14 @@ p { color: var(--muted); line-height: 1.55; }
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-soft);
-  padding: 16px;
+  padding: 20px;
 }
 
 .source-box p,
 .comparison-box p {
   color: var(--text);
-  line-height: 1.65;
-  margin: 8px 0 0;
+  line-height: 1.72;
+  margin: 10px 0 0;
   white-space: pre-wrap;
 }
 
@@ -691,12 +692,12 @@ p { color: var(--muted); line-height: 1.55; }
 .editor-box h3,
 .expert-result-box h3,
 .assignment-chat h3 {
-  margin: 0 0 6px;
+  margin: 4px 0 12px;
 }
 
 .editor-box form {
   display: grid;
-  gap: 12px;
+  gap: 16px;
 }
 
 .option-grid,
@@ -704,7 +705,11 @@ p { color: var(--muted); line-height: 1.55; }
 .comparison-grid,
 .area-grid {
   display: grid;
-  gap: 10px;
+  gap: 12px;
+}
+
+.comparison-grid {
+  gap: 14px;
 }
 
 .option-button,
@@ -714,7 +719,16 @@ p { color: var(--muted); line-height: 1.55; }
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
-  padding: 10px;
+  padding: 12px;
+}
+
+.comparison-box {
+  padding: 16px 18px;
+}
+
+.comparison-box strong {
+  display: block;
+  margin-bottom: 8px;
 }
 
 .option-button {
@@ -737,7 +751,8 @@ p { color: var(--muted); line-height: 1.55; }
 
 .scale-control {
   display: grid;
-  gap: 7px;
+  gap: 10px;
+  margin-top: 14px;
 }
 
 .scale-label {
@@ -749,7 +764,7 @@ p { color: var(--muted); line-height: 1.55; }
 .segmented-scale {
   display: grid;
   grid-template-columns: repeat(5, minmax(34px, 1fr));
-  gap: 6px;
+  gap: 10px;
 }
 
 .scale-button {
@@ -767,8 +782,8 @@ p { color: var(--muted); line-height: 1.55; }
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 14px;
+  gap: 10px;
+  margin-top: 22px;
 }
 
 .autosave-status {
@@ -780,14 +795,14 @@ p { color: var(--muted); line-height: 1.55; }
 
 .review-form {
   display: grid;
-  gap: 10px;
-  margin-top: 12px;
+  gap: 14px;
+  margin-top: 18px;
 }
 
 .answer-stack {
   display: grid;
-  gap: 8px;
-  margin-top: 10px;
+  gap: 12px;
+  margin-top: 14px;
 }
 
 .answer-row {
@@ -815,7 +830,7 @@ p { color: var(--muted); line-height: 1.55; }
 
 .history-box,
 .assignment-chat {
-  margin-top: 14px;
+  margin-top: 20px;
 }
 
 .history-row {
@@ -1091,7 +1106,8 @@ legend {
 
 .admin-content {
   display: grid;
-  gap: 14px;
+  gap: 20px;
+  padding-top: 4px;
 }
 
 .admin-grid {
@@ -1122,17 +1138,43 @@ legend {
   grid-template-columns: 1fr;
 }
 
+.admin-two-column > div {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  min-width: 0;
+}
+
 .admin-section {
   display: grid;
-  gap: 10px;
-  margin-top: 14px;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.admin-content > .admin-section:first-child {
+  margin-top: 4px;
 }
 
 .admin-section-head {
   display: flex;
-  align-items: end;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+  margin-bottom: 2px;
+}
+
+.admin-section-head h3 {
+  margin-top: 2px;
+}
+
+.admin-content .project-scope-row {
+  gap: 10px;
+  padding: 6px 0 12px;
+}
+
+.admin-section-head + .project-scope-row,
+.admin-section-head + .browser-toolbar {
+  margin-top: 6px;
 }
 
 .application-list,
@@ -1154,7 +1196,11 @@ legend {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-soft);
-  padding: 12px;
+  padding: 14px;
+}
+
+.admin-detail-panel {
+  padding: 16px;
 }
 
 .application-card,
@@ -1164,7 +1210,7 @@ legend {
 .admin-detail-panel,
 .admin-form-panel {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .application-card header,
