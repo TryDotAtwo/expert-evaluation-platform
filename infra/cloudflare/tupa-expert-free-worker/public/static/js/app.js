@@ -30,6 +30,10 @@ const state = {
   adminAssignmentSearch: "",
   adminTaskPage: 1,
   adminJsonPayload: null,
+  autosaveTimer: null,
+  lastAutosaveKey: "",
+  autosaveBusy: false,
+  agentWidth: Number.parseInt(localStorage.getItem("expert_platform_agent_width") || "340", 10),
   adminToken: localStorage.getItem("expert_platform_admin_token") || "",
   impersonation: parseStoredJson("expert_platform_impersonation", null),
   agentMessages: [
@@ -72,6 +76,7 @@ const els = {
   compactProjectList: document.getElementById("compact-project-list"),
   taskCard: document.getElementById("task-card"),
   adminSurface: document.getElementById("admin-surface"),
+  agentResizer: document.getElementById("agent-resizer"),
   refreshButton: document.getElementById("refresh-button"),
   agentLog: document.getElementById("agent-log"),
   agentForm: document.getElementById("agent-form"),
@@ -139,6 +144,7 @@ function toast(message) {
 function applyTheme() {
   document.documentElement.dataset.theme = state.theme === "dark" ? "dark" : "light";
   localStorage.setItem("expert_platform_theme", state.theme);
+  setCookie("expert_platform_theme", state.theme, 90);
   updateTopbarThemeButton();
 }
 
@@ -157,11 +163,75 @@ function syncMenuState() {
   els.menuToggle?.setAttribute("aria-expanded", String(!state.menuCollapsed));
   els.menuToggle?.setAttribute("aria-label", state.menuCollapsed ? "Развернуть меню" : "Свернуть меню");
   localStorage.setItem("expert_platform_menu_collapsed", state.menuCollapsed ? "1" : "0");
+  setCookie("expert_platform_menu_collapsed", state.menuCollapsed ? "1" : "0", 90);
 }
 
 function toggleMenu() {
   state.menuCollapsed = !state.menuCollapsed;
+  spinMenuButton();
   syncMenuState();
+}
+
+function spinMenuButton() {
+  if (!els.menuToggle) return;
+  els.menuToggle.classList.remove("spinning");
+  void els.menuToggle.offsetWidth;
+  els.menuToggle.classList.add("spinning");
+  setTimeout(() => els.menuToggle?.classList.remove("spinning"), 520);
+}
+
+function setCookie(name, value, days = 7) {
+  const expires = new Date(Date.now() + days * 86400000).toUTCString();
+  document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(String(value))}; expires=${expires}; path=/expert; SameSite=Lax`;
+}
+
+function getCookie(name) {
+  const encoded = `${encodeURIComponent(name)}=`;
+  const item = document.cookie.split("; ").find((part) => part.startsWith(encoded));
+  return item ? decodeURIComponent(item.slice(encoded.length)) : "";
+}
+
+function applyAgentWidth() {
+  const width = Math.max(280, Math.min(560, Number.isFinite(state.agentWidth) ? state.agentWidth : 340));
+  state.agentWidth = width;
+  document.documentElement.style.setProperty("--agent-width", `${width}px`);
+  localStorage.setItem("expert_platform_agent_width", String(width));
+  setCookie("expert_platform_agent_width", String(width), 90);
+}
+
+function initAgentResizer() {
+  if (!els.agentResizer) return;
+  let active = false;
+  const setFromClientX = (clientX) => {
+    const nextWidth = Math.round(window.innerWidth - clientX - 12);
+    state.agentWidth = nextWidth;
+    applyAgentWidth();
+  };
+  const stop = () => {
+    if (!active) return;
+    active = false;
+    document.body.classList.remove("resizing-agent");
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", stop);
+  };
+  const move = (event) => {
+    if (!active) return;
+    event.preventDefault();
+    setFromClientX(event.clientX);
+  };
+  els.agentResizer.addEventListener("pointerdown", (event) => {
+    active = true;
+    document.body.classList.add("resizing-agent");
+    setFromClientX(event.clientX);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+  });
+  els.agentResizer.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    state.agentWidth += event.key === "ArrowLeft" ? 24 : -24;
+    applyAgentWidth();
+  });
 }
 
 async function api(path, options = {}) {
@@ -300,6 +370,7 @@ function ensureSelectedProject(dashboard) {
     || projects[0];
   state.selectedProjectId = selected.id;
   localStorage.setItem("expert_platform_project", selected.id);
+  setCookie("expert_platform_project", selected.id, 90);
   return selected;
 }
 
@@ -314,6 +385,7 @@ function ensureSelectedAdminProject(ctx) {
     || ctx.projects[0];
   state.selectedAdminProjectId = selected.id;
   localStorage.setItem("expert_platform_admin_project", selected.id);
+  setCookie("expert_platform_admin_project", selected.id, 90);
   return selected;
 }
 
@@ -503,6 +575,7 @@ function bindTaskBrowser() {
     button.addEventListener("click", () => {
       state.selectedProjectId = button.dataset.projectFilter || "";
       localStorage.setItem("expert_platform_project", state.selectedProjectId);
+      setCookie("expert_platform_project", state.selectedProjectId, 90);
       state.taskPage = 1;
       state.selectedAssignmentId = "";
       renderDashboard();
@@ -795,6 +868,18 @@ function renderAdminSummary(admin, ctx) {
   const reviewerCount = ctx.experts.filter((item) => item.role === "reviewer" || item.wants_reviewer).length;
   const submitted = admin.quality?.submitted || 0;
   const approved = admin.quality?.approved || 0;
+  const recentRequests = [
+    ...ctx.memberships.filter((item) => item.status === "requested").slice(0, 4).map((item) => ({
+      title: item.project_name || item.project_id,
+      note: `${item.display_name || item.email} · доступ к проекту`,
+      status: item.status,
+    })),
+    ...ctx.applications.filter((item) => item.status === "pending").slice(0, 4).map((item) => ({
+      title: item.display_name || item.email,
+      note: `${item.contact || item.email} · регистрация`,
+      status: item.status,
+    })),
+  ].slice(0, 6);
   return `
     <section class="admin-section">
       <div class="admin-grid">
@@ -807,15 +892,28 @@ function renderAdminSummary(admin, ctx) {
     </section>
     <section class="admin-section admin-two-column">
       <div>
-        <div class="admin-section-head"><div><span class="eyebrow">Фокус</span><h3>Ближайшие решения</h3></div></div>
-        <div class="application-list compact">
-          ${ctx.applications.slice(0, 4).map(renderApplicationCard).join("") || `<div class="empty-inline">Заявок нет.</div>`}
+        <div class="admin-section-head"><div><span class="eyebrow">Проекты</span><h3>Короткий статус</h3></div></div>
+        <div class="export-list">
+          ${ctx.projects.slice(0, 8).map((project) => {
+            const count = ctx.assignments.filter((assignment) => assignment.project_id === project.id).length;
+            return `
+              <div class="export-row compact-row">
+                <div><strong>${escapeHtml(project.name)}</strong><small>${escapeHtml(taskTypeLabel(project.task_type))} · ${escapeHtml(project.visibility === "hidden" ? "скрыт" : "публичный")}</small></div>
+                <span class="chip">${escapeHtml(count)} заданий</span>
+              </div>
+            `;
+          }).join("") || `<div class="empty-inline">Проектов нет.</div>`}
         </div>
       </div>
       <div>
-        <div class="admin-section-head"><div><span class="eyebrow">Работа</span><h3>Последние задания</h3></div></div>
-        <div class="admin-list">
-          ${ctx.assignments.slice(0, 6).map(renderAdminAssignmentRow).join("") || `<div class="empty-inline">Заданий нет.</div>`}
+        <div class="admin-section-head"><div><span class="eyebrow">Обращения</span><h3>Что требует решения</h3></div></div>
+        <div class="export-list">
+          ${recentRequests.map((item) => `
+            <div class="export-row compact-row">
+              <div><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.note)}</small></div>
+              ${statusChip(item.status)}
+            </div>
+          `).join("") || `<div class="empty-inline">Новых обращений нет.</div>`}
         </div>
       </div>
     </section>
@@ -923,42 +1021,40 @@ function renderAdminExperts(ctx) {
   const progress = selected?.progress || {};
   const mentions = progress.mentions || [];
   return `
-    <section class="admin-section admin-two-column wide-left">
-      <div>
-        <div class="admin-section-head"><div><span class="eyebrow">Профили экспертов</span><h3>Люди и доступы</h3></div></div>
-        <div class="expert-grid">${ctx.experts.map(renderExpertProfileCard).join("") || `<div class="empty-inline">Профилей нет.</div>`}</div>
-      </div>
-      <aside class="admin-detail-panel">
-        <span class="eyebrow">Профиль</span>
-        ${selected ? `
-          <h3>${escapeHtml(selected.display_name)}</h3>
-          <div class="detail-table">
-            <div><span>Email</span><strong>${escapeHtml(selected.email)}</strong></div>
-            <div><span>Роль</span><strong>${escapeHtml(roleLabels[selected.role] || selected.role)}</strong></div>
-            <div><span>Статус</span><strong>${escapeHtml(selected.status || "active")}</strong></div>
-            <div><span>Режим</span><strong>${escapeHtml(selected.mode || "expert")}</strong></div>
-            <div><span>Создан</span><strong>${escapeHtml(displayDate(selected.created_at))}</strong></div>
-          </div>
-          <div class="application-meta">${adminPills(selected.legal_areas || [])}</div>
-          <div class="admin-note-row"><span>Регалии</span><strong>${escapeHtml(selected.admin_credentials || "не заполнены")}</strong></div>
-          <div class="admin-grid compact-metrics">
-            ${metricCard("всего", progress.total || 0)}
-            ${metricCard("отправлено", progress.submitted || 0)}
-            ${metricCard("принято", progress.approved || 0)}
-            ${metricCard("доработка", progress.needs_rework || 0)}
-          </div>
-          <div class="export-list">
-            ${mentions.map((item) => `
-              <div class="export-row compact-row">
-                <div><strong>${escapeHtml(item.project_name)}</strong><small>${escapeHtml(item.solved)} / ${escapeHtml(item.threshold)} решено</small></div>
-                <span class="chip ${item.eligible ? "approved" : "pending"}">${item.eligible ? "упоминание открыто" : `${item.remaining} осталось`}</span>
-              </div>
-            `).join("") || `<div class="empty-inline">Упоминаний пока нет.</div>`}
-          </div>
-          <button class="secondary-button" type="button" data-impersonate-user="${escapeHtml(selected.id)}">Смотреть от лица пользователя</button>
-        ` : `<div class="empty-inline">Выберите профиль.</div>`}
-      </aside>
+    <section class="admin-section">
+      <div class="admin-section-head"><div><span class="eyebrow">Профили экспертов</span><h3>Мозаика команды</h3></div></div>
+      <div class="expert-grid mosaic">${ctx.experts.map(renderExpertProfileCard).join("") || `<div class="empty-inline">Профилей нет.</div>`}</div>
     </section>
+    ${selected ? `
+      <section class="admin-detail-panel expert-detail-expanded">
+        <span class="eyebrow">Профиль</span>
+        <h3>${escapeHtml(selected.display_name)}</h3>
+        <div class="detail-table expert-detail-grid">
+          <div><span>Email</span><strong>${escapeHtml(selected.email)}</strong></div>
+          <div><span>Роль</span><strong>${escapeHtml(roleLabels[selected.role] || selected.role)}</strong></div>
+          <div><span>Статус</span><strong>${escapeHtml(selected.status || "active")}</strong></div>
+          <div><span>Режим</span><strong>${escapeHtml(selected.mode || "expert")}</strong></div>
+          <div><span>Создан</span><strong>${escapeHtml(displayDate(selected.created_at))}</strong></div>
+        </div>
+        <div class="application-meta">${adminPills(selected.legal_areas || [])}</div>
+        <div class="admin-note-row"><span>Регалии</span><strong>${escapeHtml(selected.admin_credentials || "не заполнены")}</strong></div>
+        <div class="admin-grid compact-metrics">
+          ${metricCard("всего", progress.total || 0)}
+          ${metricCard("отправлено", progress.submitted || 0)}
+          ${metricCard("принято", progress.approved || 0)}
+          ${metricCard("доработка", progress.needs_rework || 0)}
+        </div>
+        <div class="export-list">
+          ${mentions.map((item) => `
+            <div class="export-row compact-row">
+              <div><strong>${escapeHtml(item.project_name)}</strong><small>${escapeHtml(item.solved)} / ${escapeHtml(item.threshold)} решено</small></div>
+              <span class="chip ${item.eligible ? "approved" : "pending"}">${item.eligible ? "упоминание открыто" : `${item.remaining} осталось`}</span>
+            </div>
+          `).join("") || `<div class="empty-inline">Упоминаний пока нет.</div>`}
+        </div>
+        <button class="secondary-button" type="button" data-impersonate-user="${escapeHtml(selected.id)}">Смотреть от лица пользователя</button>
+      </section>
+    ` : ""}
   `;
 }
 
@@ -1288,6 +1384,7 @@ function bindAdminSurface() {
       state.selectedAdminProjectId = node.dataset.adminProject || "";
       state.selectedAdminAssignmentId = "";
       localStorage.setItem("expert_platform_admin_project", state.selectedAdminProjectId);
+      setCookie("expert_platform_admin_project", state.selectedAdminProjectId, 90);
       localStorage.removeItem("expert_platform_admin_assignment");
       renderAdminSurface();
     });
@@ -1298,6 +1395,7 @@ function bindAdminSurface() {
       state.selectedAdminAssignmentId = "";
       state.adminTaskPage = 1;
       localStorage.setItem("expert_platform_admin_project", state.selectedAdminProjectId);
+      setCookie("expert_platform_admin_project", state.selectedAdminProjectId, 90);
       localStorage.removeItem("expert_platform_admin_assignment");
       renderAdminSurface();
     });
@@ -1406,6 +1504,7 @@ async function adminCreateProject(event) {
   state.selectedAdminProjectId = response.project?.id || state.selectedAdminProjectId;
   state.adminActiveTab = "projects";
   localStorage.setItem("expert_platform_admin_project", state.selectedAdminProjectId);
+  setCookie("expert_platform_admin_project", state.selectedAdminProjectId, 90);
   localStorage.setItem("expert_platform_admin_tab", state.adminActiveTab);
   form.reset();
   toast("Проект создан");
@@ -1496,6 +1595,7 @@ function applyAssignmentJsonToForm(form) {
 
 async function selectAssignment(id) {
   if (!id) return;
+  window.clearTimeout(state.autosaveTimer);
   setSync("задание");
   state.selectedAssignmentId = id;
   state.workspaceView = "assignment";
@@ -1522,6 +1622,8 @@ function renderTask(detail) {
   const { assignment, project, task } = detail;
   const payload = task.payload || {};
   const reviewMode = state.session?.mode === "reviewer";
+  const activeDraft = reviewMode ? {} : draftForAssignment(assignment);
+  state.lastAutosaveKey = reviewMode ? "" : JSON.stringify(activeDraft);
   els.taskCard.innerHTML = `
     <div class="task-head">
       <div class="task-title">
@@ -1535,12 +1637,12 @@ function renderTask(detail) {
         </div>
       </div>
     </div>
-    ${reviewMode ? renderReviewWorkspace(detail) : renderExpertWorkspace(detail)}
+    ${reviewMode ? renderReviewWorkspace(detail) : renderExpertWorkspace(detail, activeDraft)}
+    ${renderAssignmentChat(detail)}
     <section class="history-box">
       <span class="eyebrow">История</span>
       ${renderHistory(detail.history)}
     </section>
-    ${renderAssignmentChat(detail)}
   `;
   els.taskCard.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", () => handleTaskAction(button.dataset.action));
@@ -1552,10 +1654,19 @@ function renderTask(detail) {
       button.classList.add("selected");
       const input = els.taskCard.querySelector(`[name="${name}"]`);
       if (input) input.value = button.dataset.choice;
+      if (!reviewMode) scheduleDraftAutosave();
     });
   });
+  if (!reviewMode) bindTaskAutosave();
   const chatForm = els.taskCard.querySelector("#assignment-comment-form");
   chatForm?.addEventListener("submit", (event) => addAssignmentComment(event).catch((error) => toast(error.message)));
+  const chatTextarea = chatForm?.querySelector("textarea");
+  chatTextarea?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      chatForm.requestSubmit();
+    }
+  });
   const chatLog = els.taskCard.querySelector(".assignment-chat-log");
   if (chatLog) chatLog.scrollTop = chatLog.scrollHeight;
 }
@@ -1576,20 +1687,22 @@ function renderMaterialBox(assignment, payload) {
   `;
 }
 
-function renderExpertWorkspace(detail) {
+function renderExpertWorkspace(detail, draft = null) {
   const { assignment, task } = detail;
   const payload = task.payload || {};
+  const activeDraft = draft || draftForAssignment(assignment);
   return `
     <div class="content-grid">
       ${renderMaterialBox(assignment, payload)}
       <section class="editor-box">
         <span class="eyebrow">Работа эксперта</span>
-        ${renderEditor(assignment.task_type, payload, assignment.draft || {})}
+        ${renderEditor(assignment.task_type, payload, activeDraft)}
       </section>
     </div>
     <div class="task-actions">
-      <button class="secondary-button" type="button" data-action="draft">Сохранить</button>
-      <button class="primary-button" type="button" data-action="submit">Отправить экспертизу</button>
+      <span class="autosave-status" id="autosave-status">сохраняется автоматически</span>
+      <button class="primary-button" type="button" data-action="submit">Отправить</button>
+      <button class="secondary-button" type="button" data-action="next">Следующее задание</button>
     </div>
   `;
 }
@@ -1611,6 +1724,7 @@ function renderReviewWorkspace(detail) {
       <div class="task-actions">
         <button class="primary-button" type="button" data-action="review-approve">Принять</button>
         <button class="danger-button" type="button" data-action="review-reject">Отклонить</button>
+        <button class="secondary-button" type="button" data-action="next">Следующее задание</button>
       </div>
     </form>` : `<div class="empty-inline">Ревью начнется после отправки результата экспертом.</div>`}
   `;
@@ -1806,6 +1920,108 @@ function taskPayloadFromForm() {
   return Object.fromEntries(new FormData(form).entries());
 }
 
+function draftStorageKey(id = state.selectedAssignmentId) {
+  return id ? `expert_platform_draft_${id}` : "";
+}
+
+function readStoredDraft(id) {
+  const key = draftStorageKey(id);
+  if (!key) return {};
+  const raw = localStorage.getItem(key) || getCookie(key);
+  return parseStoredJsonFromValue(raw, {});
+}
+
+function writeStoredDraft(id, payload) {
+  const key = draftStorageKey(id);
+  if (!key) return;
+  const json = JSON.stringify(payload);
+  localStorage.setItem(key, json);
+  if (json.length < 3000) setCookie(key, json, 14);
+}
+
+function clearStoredDraft(id) {
+  const key = draftStorageKey(id);
+  if (!key) return;
+  localStorage.removeItem(key);
+  setCookie(key, "", -1);
+}
+
+function draftForAssignment(assignment) {
+  const stored = readStoredDraft(assignment?.id);
+  return { ...(assignment?.draft || {}), ...stored };
+}
+
+function setAutosaveStatus(text) {
+  const node = document.getElementById("autosave-status");
+  if (node) node.textContent = text;
+}
+
+function bindTaskAutosave() {
+  const form = document.getElementById("task-form");
+  if (!form) return;
+  form.addEventListener("input", scheduleDraftAutosave);
+  form.addEventListener("change", scheduleDraftAutosave);
+}
+
+function scheduleDraftAutosave() {
+  if (!state.selectedAssignmentId) return;
+  window.clearTimeout(state.autosaveTimer);
+  const payload = taskPayloadFromForm();
+  writeStoredDraft(state.selectedAssignmentId, payload);
+  setAutosaveStatus("черновик сохранен в браузере");
+  state.autosaveTimer = window.setTimeout(() => {
+    saveDraftSilently().catch((error) => {
+      setAutosaveStatus("автосохранение не прошло");
+      toast(error.message);
+    });
+  }, 850);
+}
+
+async function saveDraftSilently() {
+  if (!state.selectedAssignmentId || state.autosaveBusy) return;
+  const payload = taskPayloadFromForm();
+  const key = JSON.stringify(payload);
+  if (key === state.lastAutosaveKey) return;
+  state.autosaveBusy = true;
+  setAutosaveStatus("сохранение...");
+  try {
+    const detail = await api(`/api/assignments/${encodeURIComponent(state.selectedAssignmentId)}/draft`, {
+      method: "POST",
+      body: JSON.stringify({ payload }),
+    });
+    state.selectedAssignment = detail;
+    state.lastAutosaveKey = key;
+    clearStoredDraft(state.selectedAssignmentId);
+    setAutosaveStatus("сохранено на платформе");
+  } finally {
+    state.autosaveBusy = false;
+  }
+}
+
+function parseStoredJsonFromValue(value, fallback) {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+async function goToNextAssignment() {
+  const current = state.selectedAssignment?.assignment;
+  const assignments = state.dashboard?.assignments || [];
+  const projectId = current?.project_id || state.selectedProjectId;
+  const reviewMode = state.session?.mode === "reviewer";
+  const queue = assignments.filter((item) => item.project_id === projectId && (reviewMode ? item.status === "submitted" : item.status !== "approved"));
+  const currentIndex = queue.findIndex((item) => item.id === state.selectedAssignmentId);
+  const next = queue[currentIndex >= 0 ? currentIndex + 1 : 0] || queue[0];
+  if (!next || next.id === state.selectedAssignmentId) {
+    toast("Следующее задание не найдено");
+    return;
+  }
+  await selectAssignment(next.id);
+}
+
 function renderHistory(history = {}) {
   const rows = [
     ...(history.drafts || []).map((item) => ["Черновик", item.created_at]),
@@ -1823,6 +2039,11 @@ function formatDate(value) {
 
 async function handleTaskAction(action) {
   if (!state.selectedAssignmentId) return;
+  if (action === "next") {
+    await goToNextAssignment();
+    return;
+  }
+  window.clearTimeout(state.autosaveTimer);
   const payload = taskPayloadFromForm();
   let route = action;
   let body = { payload };
@@ -1844,6 +2065,7 @@ async function handleTaskAction(action) {
     body: JSON.stringify(body),
   });
   state.selectedAssignment = detail;
+  if (route === "submit" || route === "review") clearStoredDraft(state.selectedAssignmentId);
   renderTask(detail);
   await loadDashboard(state.selectedAssignmentId);
   toast("Готово");
@@ -1967,7 +2189,11 @@ async function switchMode(mode) {
 }
 
 async function boot() {
+  const cookieWidth = Number.parseInt(getCookie("expert_platform_agent_width") || "", 10);
+  if (Number.isFinite(cookieWidth)) state.agentWidth = cookieWidth;
   applyTheme();
+  applyAgentWidth();
+  initAgentResizer();
   renderAgentLog();
   await loadMeta();
   const hashToken = new URLSearchParams(location.hash.replace(/^#/, "")).get("token");
@@ -2084,7 +2310,7 @@ els.registrationForm?.addEventListener("submit", async (event) => {
 
 els.googleLoginButton?.addEventListener("click", () => {
   if (!state.meta.google_auth_enabled) {
-    els.authNote.textContent = "Google вход готов в коде, но в Cloudflare нужно добавить GOOGLE_CLIENT_ID и GOOGLE_CLIENT_SECRET.";
+    els.authNote.textContent = "Google вход не активен в текущем Worker. Если секреты уже добавлены в GitHub, дождитесь успешного deploy и синхронизации Worker secrets.";
     return;
   }
   location.href = "/api/auth/google/start";
@@ -2114,8 +2340,15 @@ els.logoutButton?.addEventListener("click", async () => {
 });
 els.agentForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const message = els.agentInput.value;
+  const message = els.agentInput.value.trim();
+  if (!message) return;
   els.agentInput.value = "";
   await askAgent(message).catch((error) => toast(error.message));
+});
+els.agentInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    els.agentForm.requestSubmit();
+  }
 });
 boot();
