@@ -21,6 +21,18 @@
 
 * { box-sizing: border-box; }
 
+html.theme-ready *,
+html.theme-ready *::before,
+html.theme-ready *::after {
+  transition:
+    background-color 220ms ease,
+    border-color 220ms ease,
+    color 220ms ease,
+    box-shadow 220ms ease,
+    fill 220ms ease,
+    stroke 220ms ease;
+}
+
 * {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--muted) 58%, transparent) transparent;
@@ -1033,24 +1045,28 @@ legend {
 }
 
 .admin-header {
-  position: sticky;
-  top: -14px;
-  z-index: 2;
-  display: grid;
-  grid-template-columns: 1fr;
-  align-items: start;
-  gap: 10px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
   border-bottom: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.96);
-  padding: 12px 0 14px;
-  backdrop-filter: blur(12px);
+  background: transparent;
+  margin: -2px 0 16px;
+  padding: 0 0 14px;
+}
+
+.admin-header h2 {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.08;
 }
 
 .admin-tabs {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-start;
-  gap: 6px;
+  gap: 8px;
+  margin: 0 0 16px;
 }
 
 .admin-tabs button,
@@ -1061,7 +1077,8 @@ legend {
   color: var(--muted);
   font-size: 12px;
   font-weight: 820;
-  padding: 8px 10px;
+  min-height: 38px;
+  padding: 8px 12px;
 }
 
 .admin-tabs button.active,
@@ -1485,8 +1502,7 @@ legend {
   --shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
 }
 
-[data-theme="dark"] .topbar,
-[data-theme="dark"] .admin-header {
+[data-theme="dark"] .topbar {
   background: rgba(13, 20, 22, 0.92);
 }
 

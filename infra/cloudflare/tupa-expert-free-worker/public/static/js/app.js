@@ -146,6 +146,7 @@ function applyTheme() {
   localStorage.setItem("expert_platform_theme", state.theme);
   setCookie("expert_platform_theme", state.theme, 90);
   updateTopbarThemeButton();
+  requestAnimationFrame(() => document.documentElement.classList.add("theme-ready"));
 }
 
 function updateTopbarThemeButton() {
@@ -1322,12 +1323,14 @@ function renderAdminSurface() {
     return;
   }
   const ctx = adminContext(admin);
+  const activeTab = adminTabs.find(([id]) => id === state.adminActiveTab) || adminTabs[0];
   els.adminSurface.classList.remove("hidden");
   els.adminSurface.innerHTML = `
     <div class="admin-header">
       <div><span class="eyebrow">Администрирование</span><h2>Контроль платформы</h2></div>
-      ${adminTabNav()}
+      <div class="task-count">${escapeHtml(activeTab[1])}</div>
     </div>
+    ${adminTabNav()}
     <div class="admin-content">${renderAdminActiveTab(admin, ctx)}</div>
   `;
   bindAdminSurface();
