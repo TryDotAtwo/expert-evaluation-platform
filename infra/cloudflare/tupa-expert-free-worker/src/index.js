@@ -88,6 +88,11 @@ function normalizeId(value) {
     .slice(0, 80);
 }
 
+function normalizeTaskType(value, fallback = "generic_review") {
+  const normalized = normalizeId(value || fallback).slice(0, 80);
+  return normalized || fallback;
+}
+
 function adminEmails(env) {
   return new Set(String(env.ADMIN_EMAILS || "").split(",").map(normalizeEmail).filter(Boolean));
 }
@@ -259,7 +264,7 @@ function taskPayloadFor(type) {
       confidence_scale: [1, 2, 3, 4, 5],
     };
   }
-  return {
+  if (type === "triplet_similarity") return {
     headline: "Близость правовых позиций",
     prompt: "Выберите текст, который ближе к исходной правовой позиции.",
     anchor: "Правообладатель может требовать компенсацию за незаконное использование товарного знака без доказывания размера убытков.",
@@ -267,10 +272,22 @@ function taskPayloadFor(type) {
     negative: "Компенсация выплачивается только после доказательства точного размера понесенных убытков по бухгалтерским документам.",
     confidence_scale: [1, 2, 3, 4, 5],
   };
+  return {
+    headline: "Универсальное экспертное задание",
+    prompt: "Изучите материал, укажите результат и аргументы.",
+    source_text: "Материал задания будет добавлен администратором.",
+    fields: [
+      { id: "result", label: "Результат", type: "textarea", required: true },
+      { id: "rationale", label: "Аргументы", type: "textarea", required: true },
+      { id: "confidence", label: "Уверенность", type: "scale", scale: [1, 2, 3, 4, 5], required: true },
+    ],
+    confidence_scale: [1, 2, 3, 4, 5],
+  };
 }
 
 function payloadForAdminAssignment(type, body = {}, fallbackTitle = "") {
-  const base = taskPayloadFor(type);
+  const incomingPayload = body.payload && typeof body.payload === "object" && !Array.isArray(body.payload) ? body.payload : {};
+  const base = { ...taskPayloadFor(type), ...incomingPayload };
   const title = String(body.task_title || fallbackTitle || base.headline || "").trim().slice(0, 180);
   const primaryText = String(body.source_text || body.material || "").trim().slice(0, 12000);
   const payload = { ...base, headline: title || base.headline };
@@ -279,11 +296,15 @@ function payloadForAdminAssignment(type, body = {}, fallbackTitle = "") {
     else if (type === "triplet_similarity") payload.anchor = primaryText;
     else payload.source_text = primaryText;
   }
+  if (body.prompt) payload.prompt = String(body.prompt).trim().slice(0, 4000);
   if (body.model_answer) payload.model_answer = String(body.model_answer).trim().slice(0, 12000);
   if (body.option_a) payload.option_a = String(body.option_a).trim().slice(0, 12000);
   if (body.option_b) payload.option_b = String(body.option_b).trim().slice(0, 12000);
   if (body.positive) payload.positive = String(body.positive).trim().slice(0, 12000);
   if (body.negative) payload.negative = String(body.negative).trim().slice(0, 12000);
+  if (Array.isArray(body.options)) payload.options = body.options.slice(0, 40);
+  if (Array.isArray(body.criteria)) payload.criteria = body.criteria.slice(0, 40);
+  if (Array.isArray(body.fields)) payload.fields = body.fields.slice(0, 40);
   return payload;
 }
 
@@ -296,6 +317,7 @@ function dueForIndex(index) {
 
 async function ensureUserAssignments(env, user) {
   await ensureProjects(env);
+  if (user.role !== "admin") return;
   const projects = await env.EXPERT_DB.prepare("SELECT * FROM projects ORDER BY created_at, id").all();
   const createdAt = nowIso();
   const statements = [];
@@ -447,16 +469,64 @@ function publicUser(user, profile) {
   };
 }
 
+function emptyProgress() {
+  return {
+    assigned: 0,
+    draft_saved: 0,
+    submitted: 0,
+    approved: 0,
+    needs_rework: 0,
+    total: 0,
+    mentions: [],
+  };
+}
+
+async function progressForUsers(env, userIds = []) {
+  const uniqueIds = Array.from(new Set(userIds.filter(Boolean)));
+  const progress = {};
+  uniqueIds.forEach((userId) => { progress[userId] = emptyProgress(); });
+  if (!uniqueIds.length) return progress;
+  const placeholders = uniqueIds.map(() => "?").join(",");
+  const rows = (await env.EXPERT_DB.prepare(
+    `SELECT a.user_id, a.project_id, a.status, COUNT(*) AS count, p.name AS project_name FROM assignments a LEFT JOIN projects p ON p.id = a.project_id WHERE a.user_id IN (${placeholders}) GROUP BY a.user_id, a.project_id, a.status`
+  ).bind(...uniqueIds).all()).results || [];
+  for (const row of rows) {
+    const item = progress[row.user_id] || emptyProgress();
+    const count = Number(row.count || 0);
+    item[row.status] = (item[row.status] || 0) + count;
+    item.total += count;
+    progress[row.user_id] = item;
+  }
+  for (const userId of Object.keys(progress)) {
+    const projectRows = rows.filter((row) => row.user_id === userId);
+    const byProject = new Map();
+    for (const row of projectRows) {
+      const item = byProject.get(row.project_id) || { project_id: row.project_id, project_name: row.project_name || row.project_id, solved: 0 };
+      if (row.status === "approved" || row.status === "submitted") item.solved += Number(row.count || 0);
+      byProject.set(row.project_id, item);
+    }
+    progress[userId].mentions = Array.from(byProject.values()).map((item) => ({
+      ...item,
+      threshold: 400,
+      eligible: item.solved >= 400,
+      remaining: Math.max(0, 400 - item.solved),
+    }));
+  }
+  return progress;
+}
+
 async function listExpertProfiles(env) {
   const rows = (await env.EXPERT_DB.prepare(
     "SELECT u.id, u.email, u.display_name, u.role, u.status, u.auth_provider, u.created_at, u.updated_at, p.legal_areas_json, p.wants_reviewer, p.mode, p.coauthor_consent, p.admin_credentials_text FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.role IN ('expert', 'reviewer', 'admin') ORDER BY CASE u.role WHEN 'admin' THEN 0 WHEN 'reviewer' THEN 1 ELSE 2 END, u.created_at DESC LIMIT 300"
   ).all()).results || [];
+  const progress = await progressForUsers(env, rows.map((row) => row.id));
   return rows.map((row) => ({
     ...row,
     legal_areas: safeJsonParse(row.legal_areas_json, []),
     wants_reviewer: Boolean(row.wants_reviewer),
     coauthor_consent: Boolean(row.coauthor_consent),
     admin_credentials: row.admin_credentials_text || "",
+    progress: progress[row.id] || emptyProgress(),
   }));
 }
 
@@ -721,7 +791,9 @@ async function dashboard(env, account) {
   const membershipsResult = await env.EXPERT_DB.prepare("SELECT * FROM project_memberships WHERE user_id = ?").bind(account.user.id).all();
   const assignmentsResult = account.user.role === "admin"
     ? await env.EXPERT_DB.prepare("SELECT * FROM assignments ORDER BY due_at, created_at").all()
-    : await env.EXPERT_DB.prepare("SELECT * FROM assignments WHERE user_id = ? ORDER BY due_at, created_at").bind(account.user.id).all();
+    : await env.EXPERT_DB.prepare(
+      "SELECT a.* FROM assignments a LEFT JOIN project_memberships pm ON pm.project_id = a.project_id AND pm.user_id = a.user_id WHERE a.user_id = ? AND COALESCE(pm.status, 'active') = 'active' ORDER BY a.due_at, a.created_at"
+    ).bind(account.user.id).all();
   const profile = await getProfile(env, account.user.id);
   const legalAreas = new Set(safeJsonParse(profile?.legal_areas_json, []));
   const membershipMap = new Map((membershipsResult.results || []).map((item) => [item.project_id, item.status]));
@@ -749,6 +821,12 @@ async function dashboard(env, account) {
     ? (await env.EXPERT_DB.prepare("SELECT id, email, display_name, contact, legal_areas_json, wants_reviewer, coauthor_consent, status, admin_note, admin_credentials_text, decided_by, decided_at, created_at, updated_at FROM registration_applications ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at DESC LIMIT 100").all()).results || []
     : [];
   const experts = account.user.role === "admin" ? await listExpertProfiles(env) : [];
+  const projectMemberships = account.user.role === "admin"
+    ? (await env.EXPERT_DB.prepare(
+      "SELECT pm.user_id, pm.project_id, pm.status, pm.created_at, u.email, u.display_name, u.role, p.name AS project_name, p.required_area FROM project_memberships pm LEFT JOIN users u ON u.id = pm.user_id LEFT JOIN projects p ON p.id = pm.project_id ORDER BY CASE pm.status WHEN 'requested' THEN 0 WHEN 'active' THEN 1 ELSE 2 END, pm.created_at DESC LIMIT 1000"
+    ).all()).results || []
+    : [];
+  const profileStats = await progressForUsers(env, [account.user.id]);
   return json({
     user: publicUser(account.user, profile),
     role: account.user.role,
@@ -757,8 +835,10 @@ async function dashboard(env, account) {
     projects,
     assignments,
     support_requests: adminRequests,
+    profile_stats: profileStats[account.user.id] || emptyProgress(),
     admin_surface: account.user.role === "admin" ? {
       requests: adminRequests,
+      project_memberships: projectMemberships,
       applications: applications.map((application) => ({
         ...application,
         legal_areas: safeJsonParse(application.legal_areas_json, []),
@@ -917,6 +997,9 @@ async function joinProject(request, env, account) {
   const projectId = String(body.project_id || "").trim();
   const project = await env.EXPERT_DB.prepare("SELECT * FROM projects WHERE id = ?").bind(projectId).first();
   if (!project) return error(404, "Проект не найден.");
+  const existing = await env.EXPERT_DB.prepare("SELECT * FROM project_memberships WHERE user_id = ? AND project_id = ?").bind(account.user.id, projectId).first();
+  if (existing?.status === "active") return json({ status: "active", project_id: projectId });
+  if (existing?.status === "requested") return json({ status: "requested", project_id: projectId });
   const profile = await getProfile(env, account.user.id);
   const legalAreas = new Set(safeJsonParse(profile?.legal_areas_json, []));
   if (project.required_area && !legalAreas.has(project.required_area) && account.user.role !== "admin") {
@@ -1072,9 +1155,7 @@ async function createAdminProject(request, env, account) {
   const name = String(body.name || "").trim().slice(0, 180);
   const summary = String(body.summary || "").trim().slice(0, 1200);
   const requiredArea = LEGAL_AREAS.includes(body.required_area) ? body.required_area : "";
-  const taskType = ["classification", "rubric_scorecard", "pairwise_preference", "triplet_similarity"].includes(body.task_type)
-    ? body.task_type
-    : "classification";
+  const taskType = normalizeTaskType(body.task_type, "classification");
   const explicitId = normalizeId(body.id);
   const id = explicitId || `project-${randomHex(6)}`;
   if (!name) return error(400, "Укажите название проекта.");
@@ -1105,9 +1186,7 @@ async function createAdminAssignment(request, env, account) {
   if (!project) return error(404, "Проект не найден.");
   if (!user) return error(404, "Пользователь не найден.");
   if (!["expert", "reviewer", "admin"].includes(user.role)) return error(400, "Задание можно назначить только участнику платформы.");
-  const taskType = ["classification", "rubric_scorecard", "pairwise_preference", "triplet_similarity"].includes(body.task_type)
-    ? body.task_type
-    : project.task_type;
+  const taskType = normalizeTaskType(body.task_type || project.task_type, project.task_type);
   const payload = payloadForAdminAssignment(taskType, body, title);
   const createdAt = nowIso();
   let dueAt = dueForIndex(3);
@@ -1142,6 +1221,48 @@ async function createAdminAssignment(request, env, account) {
   ]);
   await audit(env, account.user.id, "admin.assignment_created", "assignment", id, { project_id: project.id, user_id: user.id, task_type: taskType });
   return json({ assignment: assignmentCard(await env.EXPERT_DB.prepare("SELECT * FROM assignments WHERE id = ?").bind(id).first(), project) }, 201);
+}
+
+async function adminProjectMembership(request, env, account, action) {
+  if (!requireAdmin(account)) return error(403, "Доступно только администратору.");
+  const body = await readJson(request);
+  const userId = String(body.user_id || "").trim();
+  const projectId = String(body.project_id || "").trim();
+  if (!userId || !projectId) return error(400, "Укажите user_id и project_id.");
+  const [user, project] = await Promise.all([
+    env.EXPERT_DB.prepare("SELECT * FROM users WHERE id = ? AND status = 'active'").bind(userId).first(),
+    env.EXPERT_DB.prepare("SELECT * FROM projects WHERE id = ?").bind(projectId).first(),
+  ]);
+  if (!user) return error(404, "Пользователь не найден.");
+  if (!project) return error(404, "Проект не найден.");
+  const status = action === "revoke" ? "revoked" : action === "reject" ? "rejected" : "active";
+  const createdAt = nowIso();
+  await env.EXPERT_DB.prepare(
+    "INSERT OR REPLACE INTO project_memberships (user_id, project_id, status, created_at) VALUES (?, ?, ?, ?)"
+  ).bind(userId, projectId, status, createdAt).run();
+  await audit(env, account.user.id, `admin.project_membership_${status}`, "project_membership", `${projectId}:${userId}`, {
+    user_id: userId,
+    project_id: projectId,
+    status,
+  });
+  return json({ user_id: userId, project_id: projectId, status });
+}
+
+async function adminImpersonate(request, env, account) {
+  if (!requireAdmin(account)) return error(403, "Доступно только администратору.");
+  const body = await readJson(request);
+  const userId = String(body.user_id || "").trim();
+  const user = await getUserById(env, userId);
+  if (!user || (user.status && user.status !== "active")) return error(404, "Пользователь не найден.");
+  const sessionResponse = await issueSession(env, user, "auth.admin_impersonation_login");
+  const session = await sessionResponse.json();
+  await audit(env, account.user.id, "admin.impersonation_started", "user", userId, { admin_id: account.user.id, target_email: user.email });
+  return json({
+    token: session.token,
+    user: session.user,
+    profile: session.profile,
+    impersonated_by: publicUser(account.user, account.profile),
+  });
 }
 
 function detectAgentIntent(message) {
@@ -1384,6 +1505,10 @@ async function handleApi(request, env) {
   }
   if (path === "/api/admin/projects" && request.method === "POST") return createAdminProject(request, env, account);
   if (path === "/api/admin/assignments" && request.method === "POST") return createAdminAssignment(request, env, account);
+  if (path === "/api/admin/project-memberships/grant" && request.method === "POST") return adminProjectMembership(request, env, account, "grant");
+  if (path === "/api/admin/project-memberships/reject" && request.method === "POST") return adminProjectMembership(request, env, account, "reject");
+  if (path === "/api/admin/project-memberships/revoke" && request.method === "POST") return adminProjectMembership(request, env, account, "revoke");
+  if (path === "/api/admin/impersonate" && request.method === "POST") return adminImpersonate(request, env, account);
   const applicationDecisionMatch = path.match(/^\/api\/admin\/applications\/([^/]+)\/decision$/);
   if (applicationDecisionMatch && request.method === "POST") return decideApplication(request, env, account, applicationDecisionMatch[1]);
   if (path === "/api/admin/export" && request.method === "GET") return exportProjectResults(request, env, account);

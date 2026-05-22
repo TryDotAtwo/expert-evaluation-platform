@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Экспертная платформа</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/static/css/app.css?v=prod-d1-ux-9" />
+    <link rel="stylesheet" href="/static/css/app.css?v=prod-d1-ux-10" />
   </head>
   <body>
     <div class="app-shell">
@@ -82,26 +82,20 @@
           <div class="rail-header">
             <div>
               <span class="eyebrow">Меню</span>
-              <h2>Проекты и задания</h2>
+              <h2>Навигация</h2>
             </div>
             <div class="rail-tools">
               <div class="status-pill" id="sync-status">готово</div>
               <button class="icon-button" id="refresh-button" type="button" title="Обновить" aria-label="Обновить">↻</button>
             </div>
           </div>
+          <input id="assignment-search" type="hidden" />
+          <nav class="side-nav" id="compact-project-list" aria-label="Разделы платформы"></nav>
           <div class="mode-switch hidden" id="mode-switch">
             <button type="button" data-mode="expert" class="active">Эксперт</button>
             <button type="button" data-mode="reviewer">Ревью</button>
           </div>
-          <section class="menu-section">
-            <div class="menu-section-title">Проекты</div>
-            <div class="project-menu-list" id="compact-project-list"></div>
-          </section>
-          <label class="search-box">Поиск задания<input id="assignment-search" placeholder="название, тип, статус" /></label>
-          <section class="menu-section menu-section-grow">
-            <div class="menu-section-title">Задания</div>
-            <div class="assignment-list" id="assignment-list"></div>
-          </section>
+          <div class="side-status" id="assignment-list"></div>
         </aside>
 
         <section class="workbench">
@@ -155,6 +149,6 @@
     </aside>
 
     <div class="toast-stack" id="toast-stack"></div>
-    <script type="module" src="/static/js/app.js?v=prod-d1-ux-9"></script>
+    <script type="module" src="/static/js/app.js?v=prod-d1-ux-10"></script>
   </body>
 </html>
