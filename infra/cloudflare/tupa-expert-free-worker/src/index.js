@@ -160,6 +160,10 @@ async function tokenHash(env, token) {
   return sha256Hex(`${token}:${env.SESSION_SECRET || "missing-session-secret"}`);
 }
 
+async function passwordDigest(env, password, saltHex) {
+  return sha256Hex(`password:v1:${saltHex}:${String(password || "")}:${env.SESSION_SECRET || "missing-session-secret"}`);
+}
+
 function bytesToHex(bytes) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
@@ -189,15 +193,21 @@ async function derivePassword(password, saltHex, iterations = PASSWORD_ITERATION
   return bytesToHex(new Uint8Array(bits));
 }
 
-async function passwordHash(password) {
+async function passwordHash(password, env) {
   const salt = randomHex(16);
-  const hash = await derivePassword(password, salt);
-  return `pbkdf2_sha256$${PASSWORD_ITERATIONS}$${salt}$${hash}`;
+  const hash = await passwordDigest(env, password, salt);
+  return `sha256_v1$${salt}$${hash}`;
 }
 
-async function verifyPassword(password, storedHash) {
+async function verifyPassword(password, storedHash, env) {
   const parts = String(storedHash || "").split("$");
+  if (parts.length === 3 && parts[0] === "sha256_v1") {
+    return constantTimeEqual(await passwordDigest(env, password, parts[1]), parts[2]);
+  }
   if (parts.length !== 4 || parts[0] !== "pbkdf2_sha256") return false;
+  if (Number.parseInt(parts[1], 10) > 20000) {
+    throw new Error("legacy_password_reset_required");
+  }
   const iterations = Number.parseInt(parts[1], 10);
   if (!Number.isFinite(iterations) || iterations < 10000) return false;
   const actual = await derivePassword(password, parts[2], iterations);
@@ -669,7 +679,15 @@ async function passwordLogin(request, env) {
     if (user && !user.password_hash) return error(428, "Для этого аккаунта нужно установить пароль через email-код.");
     return error(401, "Неверный email или пароль.");
   }
-  const valid = await verifyPassword(password, user.password_hash);
+  let valid = false;
+  try {
+    valid = await verifyPassword(password, user.password_hash, env);
+  } catch (err) {
+    if (err?.message === "legacy_password_reset_required") {
+      return error(428, "Для этого аккаунта нужно переустановить пароль через email-код.");
+    }
+    throw err;
+  }
   if (!valid) return error(401, "Неверный email или пароль.");
   return issueSession(env, user, "auth.password_login");
 }
@@ -716,7 +734,7 @@ async function setupPassword(request, env) {
     user = await createUserIfMissing(env, email);
   }
   if (!user || (user.status && user.status !== "active")) return error(403, "Аккаунт не найден или заявка еще не одобрена.");
-  const hashed = await passwordHash(password);
+  const hashed = await passwordHash(password, env);
   const roleSql = adminEmails(env).has(email) ? ", role = 'admin'" : "";
   await env.EXPERT_DB.prepare(`UPDATE users SET password_hash = ?, auth_provider = 'password', updated_at = ?${roleSql} WHERE id = ?`)
     .bind(hashed, nowIso(), user.id).run();
@@ -741,7 +759,7 @@ async function registerApplication(request, env) {
   if (!legalAreas.length) return error(400, "Выберите хотя бы одну область права.");
   const existing = await getUserByEmail(env, email);
   if (existing?.status === "active") return error(409, "Аккаунт с этим email уже активен.");
-  const hashed = await passwordHash(password);
+  const hashed = await passwordHash(password, env);
   const createdAt = nowIso();
   await env.EXPERT_DB.prepare(
     "INSERT INTO registration_applications (id, email, password_hash, display_name, contact, legal_areas_json, wants_reviewer, coauthor_consent, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?) ON CONFLICT(email) DO UPDATE SET password_hash = excluded.password_hash, display_name = excluded.display_name, contact = excluded.contact, legal_areas_json = excluded.legal_areas_json, wants_reviewer = excluded.wants_reviewer, coauthor_consent = excluded.coauthor_consent, status = 'pending', admin_note = '', admin_credentials_text = '', decided_by = NULL, decided_at = NULL, updated_at = excluded.updated_at"
@@ -1540,7 +1558,7 @@ async function serveStatic(request, env) {
   });
 }
 
-async function handleApi(request, env) {
+async function handleApiInner(request, env) {
   const url = new URL(request.url);
   const path = url.pathname;
   if (path === "/health") return json({ status: "ok", hosting: "cloudflare_worker_d1_r2_kv", root_policy: "reserved" });
@@ -1604,6 +1622,18 @@ async function handleApi(request, env) {
     return json({ requests });
   }
   return error(404, "Маршрут не найден.");
+}
+
+async function handleApi(request, env) {
+  try {
+    return await handleApiInner(request, env);
+  } catch (err) {
+    const status = err?.message === "legacy_password_reset_required" ? 428 : 500;
+    const detail = status === 428
+      ? "Для этого аккаунта нужно переустановить пароль через email-код."
+      : "Внутренняя ошибка API. Попробуйте еще раз.";
+    return error(status, detail);
+  }
 }
 
 export default {
